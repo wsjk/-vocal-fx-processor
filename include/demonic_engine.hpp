@@ -10,7 +10,9 @@ struct VocalPreset {
     float robotFreq;
     float wavefoldDrive;
     float decimationFactor;
-    float reverbMix; // 0.0 to 1.0
+    float delayFeedback; // 0.0 to 1.05 (Infinite Repeat)
+    float delayMix;      // 0.0 to 1.0
+    float reverbMix;
     float wetDryMix;
 };
 
@@ -26,8 +28,13 @@ public:
     void setRobotFreq(float freqHz);       
     void setWavefold(float foldDrive);     
     void setDecimation(float factor);      
-    void setReverbMix(float revMix);       // 0.0 to 1.0
+    void setDelayFeedback(float feedback); // 0.0 to 1.05
+    void setDelayMix(float mix);           // 0.0 to 1.0
+    void setReverbMix(float revMix);       
     void setMix(float wetDry);             
+    
+    void setSpectralFreeze(bool freeze);   // Infinite Sustain Toggle
+    bool isSpectralFrozen() const;
 
     void loadPreset(int index);
     const char* getCurrentPresetName() const;
@@ -43,7 +50,10 @@ private:
     float robotFreq;
     float wavefoldDrive;
     float decimationFactor;
+    float delayFeedback;
+    float delayMix;
     float reverbMix;
+    bool spectralFreezeActive;
 
     int currentPresetIndex;
     static const int NUM_PRESETS = 3;
@@ -66,10 +76,15 @@ private:
     size_t delayWriteHead;
     float lfoChorusPhase;
 
-    // Reverb / Echo delay line (larger buffer for cavernous reflections)
+    // Feedback Delay Buffer (~500ms for Echo / Infinite Repeat)
+    float feedbackDelayBuffer[22050];
+    size_t feedbackDelayWriteHead;
+
+    // Spectral Freeze Buffer (~4096 samples for Infinite Sustain Drone)
+    float freezeBuffer[4096];
+    float freezeReadHead;
+
+    // Reverb buffer
     float reverbBuffer[16384];
     size_t reverbWriteHead;
-
-    float historyBuffer[512];
-    size_t writeHead;
 };

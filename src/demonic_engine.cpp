@@ -4,18 +4,22 @@
 
 DemonicEngine::DemonicEngine(float sr) 
     : sampleRate(sr), formantCents(-500.0f), currentPresetIndex(0),
-      lastInput(0.0f), subToggle(false), subFilterState(0.0f), 
-      dcInPrev(0.0f), dcOutPrev(0.0f), lowpassState(0.0f), 
-      ringModPhase(0.0f), robotFreq(55.0f), wavefoldDrive(1.5f), decimationFactor(1.0f), reverbMix(0.35f),
+      subBlend(0.85f), driveDb(11.0f), wetDryMix(0.85f), robotBlend(0.0f), robotFreq(55.0f), 
+      wavefoldDrive(1.5f), decimationFactor(1.0f), delayFeedback(0.5f), delayMix(0.3f), reverbMix(0.35f),
+      spectralFreezeActive(false), lastInput(0.0f), subToggle(false), subFilterState(0.0f), 
+      dcInPrev(0.0f), dcOutPrev(0.0f), lowpassState(0.0f), ringModPhase(0.0f),
       heldSample(0.0f), decimationCounter(0), inputEnvelope(0.0f),
-      delayWriteHead(0), lfoChorusPhase(0.0f), reverbWriteHead(0), writeHead(0) {
-    std::fill(std::begin(historyBuffer), std::end(historyBuffer), 0.0f);
+      delayWriteHead(0), lfoChorusPhase(0.0f), feedbackDelayWriteHead(0), 
+      freezeReadHead(0.0f), reverbWriteHead(0) {
     std::fill(std::begin(delayLine), std::end(delayLine), 0.0f);
+    std::fill(std::begin(feedbackDelayBuffer), std::end(feedbackDelayBuffer), 0.0f);
+    std::fill(std::begin(freezeBuffer), std::end(freezeBuffer), 0.0f);
     std::fill(std::begin(reverbBuffer), std::end(reverbBuffer), 0.0f);
 
-    presets[0] = {"DEMONIC GROWL", 11.0f, 0.85f, 0.0f,  45.0f, 1.0f, 1.0f, 0.45f, 0.85f};
-    presets[1] = {"MEGATRON",       6.0f,  0.20f, 0.95f, 75.0f, 3.0f, 3.5f, 0.20f, 0.90f};
-    presets[2] = {"CYBER DEMON",    10.0f, 0.70f, 0.65f, 55.0f, 2.5f, 2.0f, 0.50f, 0.85f};
+    // {Name, Drive, Sub, Robot, Freq, Fold, Decim, DelayFB, DelayMix, RevMix, Mix}
+    presets[0] = {"DEMONIC GROWL", 11.0f, 0.85f, 0.0f,  45.0f, 1.0f, 1.0f, 0.6f,  0.35f, 0.45f, 0.85f};
+    presets[1] = {"MEGATRON",       6.0f,  0.20f, 0.95f, 75.0f, 3.0f, 3.5f, 0.4f,  0.20f, 0.20f, 0.90f};
+    presets[2] = {"CYBER DEMON",    10.0f, 0.70f, 0.65f, 55.0f, 2.5f, 2.0f, 0.75f, 0.40f, 0.50f, 0.85f};
 
     loadPreset(0);
 }
@@ -27,8 +31,25 @@ void DemonicEngine::setRobotBlend(float blend) { robotBlend = blend; }
 void DemonicEngine::setRobotFreq(float freq) { robotFreq = freq; }
 void DemonicEngine::setWavefold(float fold) { wavefoldDrive = fold; }
 void DemonicEngine::setDecimation(float factor) { decimationFactor = factor; }
+void DemonicEngine::setDelayFeedback(float fb) { delayFeedback = fb; }
+void DemonicEngine::setDelayMix(float mix) { delayMix = mix; }
 void DemonicEngine::setReverbMix(float revMix) { reverbMix = revMix; }
 void DemonicEngine::setMix(float mix) { wetDryMix = mix; }
+
+void DemonicEngine::setSpectralFreeze(bool freeze) {
+    if (freeze && !spectralFreezeActive) {
+        // Capture current audio frame block into freeze buffer for infinite sustain drone
+        for (size_t i = 0; i < 4096; ++i) {
+            freezeBuffer[i] = feedbackDelayBuffer[(feedbackDelayWriteHead + i) % 22050];
+        }
+        freezeReadHead = 0.0f;
+    }
+    spectralFreezeActive = freeze;
+}
+
+bool DemonicEngine::isSpectralFrozen() const {
+    return spectralFreezeActive;
+}
 
 void DemonicEngine::loadPreset(int index) {
     currentPresetIndex = index % NUM_PRESETS;
@@ -38,6 +59,8 @@ void DemonicEngine::loadPreset(int index) {
     robotFreq = presets[currentPresetIndex].robotFreq;
     wavefoldDrive = presets[currentPresetIndex].wavefoldDrive;
     decimationFactor = presets[currentPresetIndex].decimationFactor;
+    delayFeedback = presets[currentPresetIndex].delayFeedback;
+    delayMix = presets[currentPresetIndex].delayMix;
     reverbMix = presets[currentPresetIndex].reverbMix;
     wetDryMix = presets[currentPresetIndex].wetDryMix;
 }
@@ -61,7 +84,7 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         float activeSignal = (std::abs(dry) > noiseGateThreshold) ? dry : 0.0f;
         inputEnvelope = inputEnvelope + 0.1f * (std::abs(activeSignal) - inputEnvelope);
 
-        // Chorus Doubler
+        // 1. Chorus Doubler
         delayLine[delayWriteHead] = activeSignal;
         float chorusLfo = std::sin(lfoChorusPhase);
         lfoChorusPhase += (2.0f * M_PI * 0.5f) / sampleRate;
@@ -78,7 +101,7 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         float widenedVoice = activeSignal + (doubledVoice * 0.3f);
         delayWriteHead = (delayWriteHead + 1) % 2048;
 
-        // Sub-Octave
+        // 2. Sub-Octave
         if ((widenedVoice > 0.0f && lastInput <= 0.0f) || (widenedVoice < 0.0f && lastInput >= 0.0f)) {
             if (std::abs(widenedVoice) > noiseGateThreshold) {
                 subToggle = !subToggle;
@@ -92,7 +115,7 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
 
         float wet = widenedVoice + subOctave;
 
-        // Ring Mod
+        // 3. Ring Mod
         float dynamicFreq = robotFreq + (inputEnvelope * 40.0f);
         float phaseInc = (2.0f * M_PI * dynamicFreq) / sampleRate;
         float lfo = std::sin(ringModPhase);
@@ -102,7 +125,7 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         float roboticSignal = wet * lfo;
         wet = (wet * (1.0f - robotBlend)) + (roboticSignal * robotBlend * 1.5f);
 
-        // Saturation & Wavefolder
+        // 4. Saturation & Wavefolder
         wet = std::tanh(wet * gainMultiplier);
         
         if (wavefoldDrive > 0.1f) {
@@ -111,7 +134,7 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
             wet = (wet * (1.0f - 0.4f * wavefoldDrive)) + (folded * 0.4f * wavefoldDrive);
         }
 
-        // Decimation
+        // 5. Decimation
         if (decimationCounter++ % decimationStep == 0) {
             heldSample = wet;
         } else {
@@ -121,23 +144,42 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         const float quantizationLevels = 32.0f; 
         wet = std::round(wet * quantizationLevels) / quantizationLevels;
 
-        // Tone Shaping
+        // 6. Tone Shaping
         lowpassState = lowpassState + 0.35f * (wet - lowpassState);
         wet = lowpassState;
 
-        // Catacomb Reverb / Feedback Echo Network
-        size_t revDelay1 = (reverbWriteHead + 4410) % 16384; // ~100ms echo
-        size_t revDelay2 = (reverbWriteHead + 11025) % 16384; // ~250ms echo
+        // 7. Spectral Freeze / Infinite Sustain Drone Overlay
+        if (spectralFreezeActive) {
+            size_t freezeIdx = static_cast<size_t>(freezeReadHead) % 4096;
+            float frozenSample = freezeBuffer[freezeIdx];
+            freezeReadHead += 1.0f;
+            if (freezeReadHead >= 4096.0f) freezeReadHead = 0.0f;
+            wet = (wet * 0.3f) + (frozenSample * 0.7f); // Blend live signal with infinite sustain drone
+        }
+
+        // 8. Feedback Delay with Infinite Repeat / Self-Oscillation (~300ms delay tap)
+        size_t delayTap = (feedbackDelayWriteHead + 13230) % 22050;
+        float delayedSample = feedbackDelayBuffer[delayTap];
+        
+        // Feed signal + feedback into delay buffer (feedback >= 1.0 creates infinite repeat / self-oscillation)
+        feedbackDelayBuffer[feedbackDelayWriteHead] = wet + (delayedSample * delayFeedback);
+        feedbackDelayWriteHead = (feedbackDelayWriteHead + 1) % 22050;
+
+        wet = (wet * (1.0f - delayMix)) + (delayedSample * delayMix);
+
+        // 9. Catacomb Reverb
+        size_t revDelay1 = (reverbWriteHead + 4410) % 16384;
+        size_t revDelay2 = (reverbWriteHead + 11025) % 16384;
         float revTap1 = reverbBuffer[revDelay1];
         float revTap2 = reverbBuffer[revDelay2];
         
         float reverbEcho = (revTap1 * 0.6f) + (revTap2 * 0.4f);
-        reverbBuffer[reverbWriteHead] = wet + (reverbEcho * 0.55f); // feedback loop
+        reverbBuffer[reverbWriteHead] = wet + (reverbEcho * 0.55f);
         reverbWriteHead = (reverbWriteHead + 1) % 16384;
 
         wet = (wet * (1.0f - reverbMix)) + (reverbEcho * reverbMix);
 
-        // DC Blocker
+        // 10. DC Blocker
         float dcBlocked = wet - dcInPrev + 0.995f * dcOutPrev;
         dcInPrev = wet;
         dcOutPrev = dcBlocked;

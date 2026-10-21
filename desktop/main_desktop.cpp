@@ -18,9 +18,12 @@ std::atomic<float> guiRobotBlend(0.0f);
 std::atomic<float> guiRobotFreq(55.0f);
 std::atomic<float> guiWavefold(1.5f);
 std::atomic<float> guiDecimation(1.0f);
+std::atomic<float> guiDelayFB(0.5f);
+std::atomic<float> guiDelayMix(0.3f);
 std::atomic<float> guiReverb(0.45f);
 std::atomic<float> guiMix(0.85f);
 std::atomic<int>   guiActivePreset(0);
+std::atomic<bool>  guiSpectralFreeze(false);
 std::atomic<float> currentMicPeak(0.0f);
 
 constexpr size_t SCOPE_SIZE = 128;
@@ -48,8 +51,11 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     demonic.setRobotFreq(guiRobotFreq.load());
     demonic.setWavefold(guiWavefold.load());
     demonic.setDecimation(guiDecimation.load());
+    demonic.setDelayFeedback(guiDelayFB.load());
+    demonic.setDelayMix(guiDelayMix.load());
     demonic.setReverbMix(guiReverb.load());
     demonic.setMix(guiMix.load());
+    demonic.setSpectralFreeze(guiSpectralFreeze.load());
 
     float peakIn = 0.0f;
     if (in != nullptr) {
@@ -89,8 +95,8 @@ int main() {
     Pa_StartStream(stream);
 
     const int screenWidth = 480;
-    const int screenHeight = 570;
-    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Catacomb Edition");
+    const int screenHeight = 630;
+    InitWindow(screenWidth, screenHeight, "Demonic Pedal - Freeze & Infinite Repeat");
     SetTargetFPS(60);
 
     RenderTexture2D oledCanvas = LoadRenderTexture(128, 64);
@@ -100,6 +106,10 @@ int main() {
             int nextPreset = (guiActivePreset.load() + 1) % demonic.getPresetCount();
             guiActivePreset.store(nextPreset);
         }
+        if (IsKeyPressed(KEY_F)) {
+            bool currentFreeze = guiSpectralFreeze.load();
+            guiSpectralFreeze.store(!currentFreeze);
+        }
 
         float driveVal = guiDrive.load();
         float subVal = guiSubBlend.load();
@@ -107,15 +117,21 @@ int main() {
         float freqVal = guiRobotFreq.load();
         float foldVal = guiWavefold.load();
         float decimVal = guiDecimation.load();
+        float fbVal = guiDelayFB.load();
+        float delayMixVal = guiDelayMix.load();
         float revVal = guiReverb.load();
         float mixVal = guiMix.load();
         int presetIdx = guiActivePreset.load();
+        bool freezeActive = guiSpectralFreeze.load();
 
         BeginTextureMode(oledCanvas);
         ClearBackground(BLACK);
         
         DrawRectangleLines(0, 0, 128, 64, BLUE);
         DrawText(TextFormat("PTCH:%s", demonic.getCurrentPresetName()), 2, 2, 7, SKYBLUE);
+        if (freezeActive) {
+            DrawText(" [FREEZE ON]", 75, 2, 7, RED);
+        }
 
         size_t head = scopeHead.load();
         for (int x = 0; x < 128 - 1; ++x) {
@@ -128,27 +144,27 @@ int main() {
             y1 = std::clamp(y1, 12.0f, 58.0f);
             y2 = std::clamp(y2, 12.0f, 58.0f);
 
-            DrawLine(x, static_cast<int>(y1), x + 1, static_cast<int>(y2), SKYBLUE);
+            DrawLine(x, static_cast<int>(y1), x + 1, static_cast<int>(y2), freezeActive ? RED : SKYBLUE);
         }
 
         float peak = currentMicPeak.load();
-        DrawRectangle(2, 58, static_cast<int>(std::min(peak * 124.0f, 124.0f)), 4, BLUE);
+        DrawRectangle(2, 58, static_cast<int>(std::min(peak * 124.0f, 124.0f)), 4, freezeActive ? RED : BLUE);
         EndTextureMode();
 
         BeginDrawing();
         ClearBackground(GetColor(0x181818FF));
 
-        DrawText("RP2040 CATACOMB PROCESSOR", 24, 10, 18, LIGHTGRAY);
-        DrawText("Active Patch: Press 'P' or button below to cycle", 24, 30, 10, GRAY);
+        DrawText("RP2040 MASTER PROCESSOR + SUSTAIN", 24, 10, 15, LIGHTGRAY);
+        DrawText("Press 'P' to cycle preset | Press 'F' to toggle Freeze", 24, 28, 10, GRAY);
 
         Rectangle sourceRec = { 0.0f, 0.0f, (float)oledCanvas.texture.width, (float)-oledCanvas.texture.height };
-        Rectangle destRec = { (screenWidth - 256) / 2.0f, 48.0f, 256.0f, 128.0f };
+        Rectangle destRec = { (screenWidth - 256) / 2.0f, 46.0f, 256.0f, 128.0f };
         DrawTexturePro(oledCanvas.texture, sourceRec, destRec, { 0, 0 }, 0.0f, WHITE);
 
         Vector2 mousePos = GetMousePosition();
 
         // Preset Button
-        Rectangle presetBtnRec = { 140.0f, 182.0f, 200.0f, 28.0f };
+        Rectangle presetBtnRec = { 40.0f, 180.0f, 190.0f, 28.0f };
         bool btnHover = CheckCollisionPointRec(mousePos, presetBtnRec);
         if (btnHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             int nextPreset = (presetIdx + 1) % demonic.getPresetCount();
@@ -156,10 +172,20 @@ int main() {
         }
         DrawRectangleRec(presetBtnRec, btnHover ? DARKBLUE : BLUE);
         DrawRectangleLines((int)presetBtnRec.x, (int)presetBtnRec.y, (int)presetBtnRec.width, (int)presetBtnRec.height, SKYBLUE);
-        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 150, 189, 10, RAYWHITE);
+        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 48, 187, 10, RAYWHITE);
+
+        // Freeze Toggle Button ('F')
+        Rectangle freezeBtnRec = { 250.0f, 180.0f, 190.0f, 28.0f };
+        bool freezeHover = CheckCollisionPointRec(mousePos, freezeBtnRec);
+        if (freezeHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            guiSpectralFreeze.store(!freezeActive);
+        }
+        DrawRectangleRec(freezeBtnRec, freezeActive ? RED : (freezeHover ? DARKGRAY : BLACK));
+        DrawRectangleLines((int)freezeBtnRec.x, (int)freezeBtnRec.y, (int)freezeBtnRec.width, (int)freezeBtnRec.height, RED);
+        DrawText(freezeActive ? "SPECTRAL FREEZE: ON" : "SPECTRAL FREEZE: OFF", 258, 187, 10, RAYWHITE);
 
         // Sliders
-        float yPos = 222.0f;
+        float yPos = 220.0f;
         auto drawSlider = [&](const char* label, float val, float minV, float maxV, std::atomic<float>& target) {
             DrawText(label, 40, yPos + 2, 10, LIGHTGRAY);
             DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
@@ -169,7 +195,7 @@ int main() {
                 float newVal = minV + ((mousePos.x - 140.0f) / 280.0f) * (maxV - minV);
                 target.store(std::clamp(newVal, minV, maxV));
             }
-            yPos += 36.0f;
+            yPos += 34.0f;
         };
 
         drawSlider("Drive (Gain)", driveVal, 0.0f, 12.0f, guiDrive);
@@ -178,6 +204,8 @@ int main() {
         drawSlider("Clank Rate", freqVal, 10.0f, 200.0f, guiRobotFreq);
         drawSlider("Wavefolder", foldVal, 0.0f, 5.0f, guiWavefold);
         drawSlider("Decimation", decimVal, 1.0f, 6.0f, guiDecimation);
+        drawSlider("Delay Feedback", fbVal, 0.0f, 1.05f, guiDelayFB); // >1.0 creates infinite repeat / self-oscillation
+        drawSlider("Delay Mix", delayMixVal, 0.0f, 1.0f, guiDelayMix);
         drawSlider("Catacomb Rev", revVal, 0.0f, 1.0f, guiReverb);
         drawSlider("Wet/Dry Mix", mixVal, 0.0f, 1.0f, guiMix);
 
