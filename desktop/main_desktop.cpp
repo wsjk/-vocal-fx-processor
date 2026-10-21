@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
+#include <vector>
 #include <portaudio.h>
 #include "raylib.h"
 #include "demonic_engine.hpp"
@@ -11,13 +12,18 @@
 
 DemonicEngine demonic(SAMPLE_RATE);
 
-// Thread-safe parameters updated by GUI sliders/buttons
+// Thread-safe parameters and oscilloscope buffer
 std::atomic<float> guiDrive(11.0f);
 std::atomic<float> guiSubBlend(0.85f);
 std::atomic<float> guiRobotBlend(0.0f);
 std::atomic<float> guiMix(0.85f);
 std::atomic<int>   guiActivePreset(0);
 std::atomic<float> currentMicPeak(0.0f);
+
+// Ring buffer for oscilloscope visualization (128 samples wide to match OLED width)
+constexpr size_t SCOPE_SIZE = 128;
+float scopeBuffer[SCOPE_SIZE] = {0};
+std::atomic<size_t> scopeHead(0);
 
 static int audioCallback(const void* inputBuffer, void* outputBuffer,
                          unsigned long framesPerBuffer,
@@ -27,14 +33,12 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     const float* in = static_cast<const float*>(inputBuffer);
     float* out = static_cast<float*>(outputBuffer);
 
-    // Apply preset changes or manual slider overrides
+    // Apply preset changes
     static int lastPreset = -1;
     int currentPreset = guiActivePreset.load();
     if (currentPreset != lastPreset) {
         demonic.loadPreset(currentPreset);
         lastPreset = currentPreset;
-        // Sync sliders back to preset values
-        // (In a full app, getters would handle this smoothly)
     }
 
     demonic.setDrive(guiDrive.load());
@@ -48,6 +52,14 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
             peakIn = std::max(peakIn, std::abs(in[i]));
         }
         demonic.processBlock(in, out, framesPerBuffer);
+
+        // Feed output samples into the oscilloscope ring buffer
+        size_t head = scopeHead.load();
+        for (unsigned long i = 0; i < framesPerBuffer; ++i) {
+            scopeBuffer[head % SCOPE_SIZE] = out[i];
+            head++;
+        }
+        scopeHead.store(head);
     } else {
         std::fill(out, out + framesPerBuffer, 0.0f);
     }
@@ -72,16 +84,14 @@ int main() {
     }
     Pa_StartStream(stream);
 
-    // Initialize Raylib Window (Expanded for preset button)
     const int screenWidth = 480;
     const int screenHeight = 430;
-    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Presets");
+    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Oscilloscope");
     SetTargetFPS(60);
 
     RenderTexture2D oledCanvas = LoadRenderTexture(128, 64);
 
     while (!WindowShouldClose()) {
-        // Keyboard shortcut 'P' to cycle presets
         if (IsKeyPressed(KEY_P)) {
             int nextPreset = (guiActivePreset.load() + 1) % demonic.getPresetCount();
             guiActivePreset.store(nextPreset);
@@ -93,20 +103,33 @@ int main() {
         float mixVal = guiMix.load();
         int presetIdx = guiActivePreset.load();
 
-        // Draw simulated OLED screen content
+        // Draw simulated OLED screen content with live oscilloscope waveform
         BeginTextureMode(oledCanvas);
         ClearBackground(BLACK);
         
         DrawRectangleLines(0, 0, 128, 64, BLUE);
-        DrawText(TextFormat("PATCH: %s", demonic.getCurrentPresetName()), 4, 4, 9, SKYBLUE);
-        DrawLine(2, 14, 126, 14, DARKBLUE);
+        DrawText(TextFormat("PTCH:%s", demonic.getCurrentPresetName()), 2, 2, 7, SKYBLUE);
 
-        DrawText(TextFormat("DRV:%.1f SUB:%.2f", driveVal, subVal), 4, 18, 7, RAYWHITE);
-        DrawText(TextFormat("ROB:%.2f MIX:%.2f", robotVal, mixVal), 4, 27, 7, RAYWHITE);
+        // Draw Live Oscilloscope Waveform inside OLED center (y-range: 12 to 52)
+        size_t head = scopeHead.load();
+        for (int x = 0; x < 128 - 1; ++x) {
+            // Sample historical data from the ring buffer
+            size_t idx1 = (head + x) % SCOPE_SIZE;
+            size_t idx2 = (head + x + 1) % SCOPE_SIZE;
+            
+            float y1 = 32.0f - (scopeBuffer[idx1] * 24.0f);
+            float y2 = 32.0f - (scopeBuffer[idx2] * 24.0f);
+            
+            // Clamp within OLED drawing bounds
+            y1 = std::clamp(y1, 12.0f, 58.0f);
+            y2 = std::clamp(y2, 12.0f, 58.0f);
 
+            DrawLine(x, static_cast<int>(y1), x + 1, static_cast<int>(y2), SKYBLUE);
+        }
+
+        // Mini VU / peak indicator in bottom corner
         float peak = currentMicPeak.load();
-        DrawRectangle(4, 52, 120, 8, DARKGRAY);
-        DrawRectangle(4, 52, static_cast<int>(std::min(peak * 120.0f, 120.0f)), 8, SKYBLUE);
+        DrawRectangle(2, 58, static_cast<int>(std::min(peak * 124.0f, 124.0f)), 4, BLUE);
         EndTextureMode();
 
         // Main Window Drawing
