@@ -10,6 +10,7 @@ struct VocalPreset {
     float robotFreq;
     float wavefoldDrive;
     float decimationFactor;
+    float reverbMix; // 0.0 to 1.0
     float wetDryMix;
 };
 
@@ -25,6 +26,7 @@ public:
     void setRobotFreq(float freqHz);       
     void setWavefold(float foldDrive);     
     void setDecimation(float factor);      
+    void setReverbMix(float revMix);       // 0.0 to 1.0
     void setMix(float wetDry);             
 
     void loadPreset(int index);
@@ -41,6 +43,7 @@ private:
     float robotFreq;
     float wavefoldDrive;
     float decimationFactor;
+    float reverbMix;
 
     int currentPresetIndex;
     static const int NUM_PRESETS = 3;
@@ -58,9 +61,14 @@ private:
     int decimationCounter;
     float inputEnvelope;
 
+    // Chorus delay line
     float delayLine[2048];
     size_t delayWriteHead;
     float lfoChorusPhase;
+
+    // Reverb / Echo delay line (larger buffer for cavernous reflections)
+    float reverbBuffer[16384];
+    size_t reverbWriteHead;
 
     float historyBuffer[512];
     size_t writeHead;

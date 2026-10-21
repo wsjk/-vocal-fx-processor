@@ -16,7 +16,9 @@ std::atomic<float> guiDrive(11.0f);
 std::atomic<float> guiSubBlend(0.85f);
 std::atomic<float> guiRobotBlend(0.0f);
 std::atomic<float> guiRobotFreq(55.0f);
+std::atomic<float> guiWavefold(1.5f);
 std::atomic<float> guiDecimation(1.0f);
+std::atomic<float> guiReverb(0.45f);
 std::atomic<float> guiMix(0.85f);
 std::atomic<int>   guiActivePreset(0);
 std::atomic<float> currentMicPeak(0.0f);
@@ -44,7 +46,9 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     demonic.setSubOctaveBlend(guiSubBlend.load());
     demonic.setRobotBlend(guiRobotBlend.load());
     demonic.setRobotFreq(guiRobotFreq.load());
+    demonic.setWavefold(guiWavefold.load());
     demonic.setDecimation(guiDecimation.load());
+    demonic.setReverbMix(guiReverb.load());
     demonic.setMix(guiMix.load());
 
     float peakIn = 0.0f;
@@ -85,8 +89,8 @@ int main() {
     Pa_StartStream(stream);
 
     const int screenWidth = 480;
-    const int screenHeight = 490;
-    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Decimation FX");
+    const int screenHeight = 570;
+    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Catacomb Edition");
     SetTargetFPS(60);
 
     RenderTexture2D oledCanvas = LoadRenderTexture(128, 64);
@@ -101,7 +105,9 @@ int main() {
         float subVal = guiSubBlend.load();
         float robotVal = guiRobotBlend.load();
         float freqVal = guiRobotFreq.load();
+        float foldVal = guiWavefold.load();
         float decimVal = guiDecimation.load();
+        float revVal = guiReverb.load();
         float mixVal = guiMix.load();
         int presetIdx = guiActivePreset.load();
 
@@ -132,7 +138,7 @@ int main() {
         BeginDrawing();
         ClearBackground(GetColor(0x181818FF));
 
-        DrawText("RP2040 CYBER-DEMON PROCESSOR", 24, 10, 18, LIGHTGRAY);
+        DrawText("RP2040 CATACOMB PROCESSOR", 24, 10, 18, LIGHTGRAY);
         DrawText("Active Patch: Press 'P' or button below to cycle", 24, 30, 10, GRAY);
 
         Rectangle sourceRec = { 0.0f, 0.0f, (float)oledCanvas.texture.width, (float)-oledCanvas.texture.height };
@@ -153,65 +159,27 @@ int main() {
         DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 150, 189, 10, RAYWHITE);
 
         // Sliders
-        // 1. Drive
         float yPos = 222.0f;
-        DrawText("Drive (Gain)", 40, yPos + 2, 10, LIGHTGRAY);
-        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
-        DrawRectangle(140, yPos + 4, static_cast<int>((driveVal / 12.0f) * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
-            float newVal = ((mousePos.x - 140.0f) / 280.0f) * 12.0f;
-            guiDrive.store(std::clamp(newVal, 0.0f, 12.0f));
-        }
+        auto drawSlider = [&](const char* label, float val, float minV, float maxV, std::atomic<float>& target) {
+            DrawText(label, 40, yPos + 2, 10, LIGHTGRAY);
+            DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+            float ratio = (val - minV) / (maxV - minV);
+            DrawRectangle(140, yPos + 4, static_cast<int>(ratio * 280.0f), 10, SKYBLUE);
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
+                float newVal = minV + ((mousePos.x - 140.0f) / 280.0f) * (maxV - minV);
+                target.store(std::clamp(newVal, minV, maxV));
+            }
+            yPos += 36.0f;
+        };
 
-        // 2. Sub-Octave
-        yPos += 38.0f;
-        DrawText("Sub-Octave", 40, yPos + 2, 10, LIGHTGRAY);
-        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
-        DrawRectangle(140, yPos + 4, static_cast<int>(subVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
-            float newVal = (mousePos.x - 140.0f) / 280.0f;
-            guiSubBlend.store(std::clamp(newVal, 0.0f, 1.0f));
-        }
-
-        // 3. Robot Clank Blend
-        yPos += 38.0f;
-        DrawText("Robot Clank", 40, yPos + 2, 10, LIGHTGRAY);
-        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
-        DrawRectangle(140, yPos + 4, static_cast<int>(robotVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
-            float newVal = (mousePos.x - 140.0f) / 280.0f;
-            guiRobotBlend.store(std::clamp(newVal, 0.0f, 1.0f));
-        }
-
-        // 4. Clank Rate (Hz)
-        yPos += 38.0f;
-        DrawText("Clank Rate", 40, yPos + 2, 10, LIGHTGRAY);
-        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
-        DrawRectangle(140, yPos + 4, static_cast<int>(((freqVal - 10.0f) / 190.0f) * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
-            float newVal = 10.0f + ((mousePos.x - 140.0f) / 280.0f) * 190.0f;
-            guiRobotFreq.store(std::clamp(newVal, 10.0f, 200.0f));
-        }
-
-        // 5. Decimation (Aliasing)
-        yPos += 38.0f;
-        DrawText("Decimation", 40, yPos + 2, 10, LIGHTGRAY);
-        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
-        DrawRectangle(140, yPos + 4, static_cast<int>(((decimVal - 1.0f) / 5.0f) * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
-            float newVal = 1.0f + ((mousePos.x - 140.0f) / 280.0f) * 5.0f;
-            guiDecimation.store(std::clamp(newVal, 1.0f, 6.0f));
-        }
-
-        // 6. Wet/Dry Mix
-        yPos += 38.0f;
-        DrawText("Wet/Dry Mix", 40, yPos + 2, 10, LIGHTGRAY);
-        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
-        DrawRectangle(140, yPos + 4, static_cast<int>(mixVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
-            float newVal = (mousePos.x - 140.0f) / 280.0f;
-            guiMix.store(std::clamp(newVal, 0.0f, 1.0f));
-        }
+        drawSlider("Drive (Gain)", driveVal, 0.0f, 12.0f, guiDrive);
+        drawSlider("Sub-Octave", subVal, 0.0f, 1.0f, guiSubBlend);
+        drawSlider("Robot Clank", robotVal, 0.0f, 1.0f, guiRobotBlend);
+        drawSlider("Clank Rate", freqVal, 10.0f, 200.0f, guiRobotFreq);
+        drawSlider("Wavefolder", foldVal, 0.0f, 5.0f, guiWavefold);
+        drawSlider("Decimation", decimVal, 1.0f, 6.0f, guiDecimation);
+        drawSlider("Catacomb Rev", revVal, 0.0f, 1.0f, guiReverb);
+        drawSlider("Wet/Dry Mix", mixVal, 0.0f, 1.0f, guiMix);
 
         EndDrawing();
     }
