@@ -15,7 +15,8 @@ DemonicEngine demonic(SAMPLE_RATE);
 std::atomic<float> guiDrive(11.0f);
 std::atomic<float> guiSubBlend(0.85f);
 std::atomic<float> guiRobotBlend(0.0f);
-std::atomic<float> guiRobotFreq(45.0f);
+std::atomic<float> guiRobotFreq(55.0f);
+std::atomic<float> guiDecimation(1.0f);
 std::atomic<float> guiMix(0.85f);
 std::atomic<int>   guiActivePreset(0);
 std::atomic<float> currentMicPeak(0.0f);
@@ -43,6 +44,7 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     demonic.setSubOctaveBlend(guiSubBlend.load());
     demonic.setRobotBlend(guiRobotBlend.load());
     demonic.setRobotFreq(guiRobotFreq.load());
+    demonic.setDecimation(guiDecimation.load());
     demonic.setMix(guiMix.load());
 
     float peakIn = 0.0f;
@@ -83,8 +85,8 @@ int main() {
     Pa_StartStream(stream);
 
     const int screenWidth = 480;
-    const int screenHeight = 460;
-    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Advanced FX");
+    const int screenHeight = 490;
+    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Decimation FX");
     SetTargetFPS(60);
 
     RenderTexture2D oledCanvas = LoadRenderTexture(128, 64);
@@ -99,6 +101,7 @@ int main() {
         float subVal = guiSubBlend.load();
         float robotVal = guiRobotBlend.load();
         float freqVal = guiRobotFreq.load();
+        float decimVal = guiDecimation.load();
         float mixVal = guiMix.load();
         int presetIdx = guiActivePreset.load();
 
@@ -129,17 +132,17 @@ int main() {
         BeginDrawing();
         ClearBackground(GetColor(0x181818FF));
 
-        DrawText("RP2040 ADVANCED PROCESSOR", 24, 12, 18, LIGHTGRAY);
-        DrawText("Active Patch: Press 'P' or button below to cycle", 24, 32, 10, GRAY);
+        DrawText("RP2040 CYBER-DEMON PROCESSOR", 24, 10, 18, LIGHTGRAY);
+        DrawText("Active Patch: Press 'P' or button below to cycle", 24, 30, 10, GRAY);
 
         Rectangle sourceRec = { 0.0f, 0.0f, (float)oledCanvas.texture.width, (float)-oledCanvas.texture.height };
-        Rectangle destRec = { (screenWidth - 256) / 2.0f, 50.0f, 256.0f, 128.0f };
+        Rectangle destRec = { (screenWidth - 256) / 2.0f, 48.0f, 256.0f, 128.0f };
         DrawTexturePro(oledCanvas.texture, sourceRec, destRec, { 0, 0 }, 0.0f, WHITE);
 
         Vector2 mousePos = GetMousePosition();
 
         // Preset Button
-        Rectangle presetBtnRec = { 140.0f, 186.0f, 200.0f, 30.0f };
+        Rectangle presetBtnRec = { 140.0f, 182.0f, 200.0f, 28.0f };
         bool btnHover = CheckCollisionPointRec(mousePos, presetBtnRec);
         if (btnHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             int nextPreset = (presetIdx + 1) % demonic.getPresetCount();
@@ -147,50 +150,65 @@ int main() {
         }
         DrawRectangleRec(presetBtnRec, btnHover ? DARKBLUE : BLUE);
         DrawRectangleLines((int)presetBtnRec.x, (int)presetBtnRec.y, (int)presetBtnRec.width, (int)presetBtnRec.height, SKYBLUE);
-        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 150, 194, 10, RAYWHITE);
+        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 150, 189, 10, RAYWHITE);
 
         // Sliders
         // 1. Drive
-        DrawText("Drive (Gain)", 40, 230, 10, LIGHTGRAY);
-        DrawRectangle(140, 232, 280, 10, DARKGRAY);
-        DrawRectangle(140, 232, static_cast<int>((driveVal / 12.0f) * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 225 && mousePos.y <= 245) {
+        float yPos = 222.0f;
+        DrawText("Drive (Gain)", 40, yPos + 2, 10, LIGHTGRAY);
+        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+        DrawRectangle(140, yPos + 4, static_cast<int>((driveVal / 12.0f) * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
             float newVal = ((mousePos.x - 140.0f) / 280.0f) * 12.0f;
             guiDrive.store(std::clamp(newVal, 0.0f, 12.0f));
         }
 
         // 2. Sub-Octave
-        DrawText("Sub-Octave", 40, 270, 10, LIGHTGRAY);
-        DrawRectangle(140, 272, 280, 10, DARKGRAY);
-        DrawRectangle(140, 272, static_cast<int>(subVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 265 && mousePos.y <= 285) {
+        yPos += 38.0f;
+        DrawText("Sub-Octave", 40, yPos + 2, 10, LIGHTGRAY);
+        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+        DrawRectangle(140, yPos + 4, static_cast<int>(subVal * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
             float newVal = (mousePos.x - 140.0f) / 280.0f;
             guiSubBlend.store(std::clamp(newVal, 0.0f, 1.0f));
         }
 
         // 3. Robot Clank Blend
-        DrawText("Robot Clank", 40, 310, 10, LIGHTGRAY);
-        DrawRectangle(140, 312, 280, 10, DARKGRAY);
-        DrawRectangle(140, 312, static_cast<int>(robotVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 305 && mousePos.y <= 325) {
+        yPos += 38.0f;
+        DrawText("Robot Clank", 40, yPos + 2, 10, LIGHTGRAY);
+        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+        DrawRectangle(140, yPos + 4, static_cast<int>(robotVal * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
             float newVal = (mousePos.x - 140.0f) / 280.0f;
             guiRobotBlend.store(std::clamp(newVal, 0.0f, 1.0f));
         }
 
         // 4. Clank Rate (Hz)
-        DrawText("Clank Rate", 40, 350, 10, LIGHTGRAY);
-        DrawRectangle(140, 352, 280, 10, DARKGRAY);
-        DrawRectangle(140, 352, static_cast<int>(((freqVal - 10.0f) / 190.0f) * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 345 && mousePos.y <= 365) {
+        yPos += 38.0f;
+        DrawText("Clank Rate", 40, yPos + 2, 10, LIGHTGRAY);
+        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+        DrawRectangle(140, yPos + 4, static_cast<int>(((freqVal - 10.0f) / 190.0f) * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
             float newVal = 10.0f + ((mousePos.x - 140.0f) / 280.0f) * 190.0f;
             guiRobotFreq.store(std::clamp(newVal, 10.0f, 200.0f));
         }
 
-        // 5. Wet/Dry Mix
-        DrawText("Wet/Dry Mix", 40, 390, 10, LIGHTGRAY);
-        DrawRectangle(140, 392, 280, 10, DARKGRAY);
-        DrawRectangle(140, 392, static_cast<int>(mixVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 385 && mousePos.y <= 405) {
+        // 5. Decimation (Aliasing)
+        yPos += 38.0f;
+        DrawText("Decimation", 40, yPos + 2, 10, LIGHTGRAY);
+        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+        DrawRectangle(140, yPos + 4, static_cast<int>(((decimVal - 1.0f) / 5.0f) * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
+            float newVal = 1.0f + ((mousePos.x - 140.0f) / 280.0f) * 5.0f;
+            guiDecimation.store(std::clamp(newVal, 1.0f, 6.0f));
+        }
+
+        // 6. Wet/Dry Mix
+        yPos += 38.0f;
+        DrawText("Wet/Dry Mix", 40, yPos + 2, 10, LIGHTGRAY);
+        DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+        DrawRectangle(140, yPos + 4, static_cast<int>(mixVal * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
             float newVal = (mousePos.x - 140.0f) / 280.0f;
             guiMix.store(std::clamp(newVal, 0.0f, 1.0f));
         }
