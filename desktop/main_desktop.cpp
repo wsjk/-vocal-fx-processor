@@ -11,10 +11,12 @@
 
 DemonicEngine demonic(SAMPLE_RATE);
 
-// Thread-safe parameters updated by GUI sliders
-std::atomic<float> guiDrive(8.0f);
-std::atomic<float> guiSubBlend(0.6f);
-std::atomic<float> guiMix(0.8f);
+// Thread-safe parameters updated by GUI sliders/buttons
+std::atomic<float> guiDrive(11.0f);
+std::atomic<float> guiSubBlend(0.85f);
+std::atomic<float> guiRobotBlend(0.0f);
+std::atomic<float> guiMix(0.85f);
+std::atomic<int>   guiActivePreset(0);
 std::atomic<float> currentMicPeak(0.0f);
 
 static int audioCallback(const void* inputBuffer, void* outputBuffer,
@@ -25,10 +27,19 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     const float* in = static_cast<const float*>(inputBuffer);
     float* out = static_cast<float*>(outputBuffer);
 
-    // Apply live parameters from GUI
-    // (Note: In production embedded code, parameter smoothing is used to prevent zipper noise)
+    // Apply preset changes or manual slider overrides
+    static int lastPreset = -1;
+    int currentPreset = guiActivePreset.load();
+    if (currentPreset != lastPreset) {
+        demonic.loadPreset(currentPreset);
+        lastPreset = currentPreset;
+        // Sync sliders back to preset values
+        // (In a full app, getters would handle this smoothly)
+    }
+
     demonic.setDrive(guiDrive.load());
     demonic.setSubOctaveBlend(guiSubBlend.load());
+    demonic.setRobotBlend(guiRobotBlend.load());
     demonic.setMix(guiMix.load());
 
     float peakIn = 0.0f;
@@ -46,7 +57,6 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
 }
 
 int main() {
-    // Initialize PortAudio
     PaError err = Pa_Initialize();
     if (err != paNoError) {
         std::cerr << "PortAudio error: " << Pa_GetErrorText(err) << "\n";
@@ -62,86 +72,103 @@ int main() {
     }
     Pa_StartStream(stream);
 
-    // Initialize Raylib Window (Pedal GUI Shell)
+    // Initialize Raylib Window (Expanded for preset button)
     const int screenWidth = 480;
-    const int screenHeight = 360;
-    InitWindow(screenWidth, screenHeight, "Demonic Vocal Processor - Hardware Simulator");
+    const int screenHeight = 430;
+    InitWindow(screenWidth, screenHeight, "Demonic & Cybernetic Pedal Simulator - Presets");
     SetTargetFPS(60);
 
-    // Render texture to simulate the 128x64 I2C OLED screen
     RenderTexture2D oledCanvas = LoadRenderTexture(128, 64);
 
     while (!WindowShouldClose()) {
-        // Update values from GUI sliders
+        // Keyboard shortcut 'P' to cycle presets
+        if (IsKeyPressed(KEY_P)) {
+            int nextPreset = (guiActivePreset.load() + 1) % demonic.getPresetCount();
+            guiActivePreset.store(nextPreset);
+        }
+
         float driveVal = guiDrive.load();
         float subVal = guiSubBlend.load();
+        float robotVal = guiRobotBlend.load();
         float mixVal = guiMix.load();
+        int presetIdx = guiActivePreset.load();
 
         // Draw simulated OLED screen content
         BeginTextureMode(oledCanvas);
         ClearBackground(BLACK);
         
-        // OLED Screen Border & Content (Classic SSD1306 Blue/Cyan style)
         DrawRectangleLines(0, 0, 128, 64, BLUE);
-        DrawText("DEMONIC FX", 6, 4, 10, SKYBLUE);
+        DrawText(TextFormat("PATCH: %s", demonic.getCurrentPresetName()), 4, 4, 9, SKYBLUE);
         DrawLine(2, 14, 126, 14, DARKBLUE);
 
-        // Dynamic Text on OLED
-        DrawText(TextFormat("DRV: %.1fdB", driveVal), 6, 18, 8, RAYWHITE);
-        DrawText(TextFormat("SUB: %.2f", subVal), 6, 28, 8, RAYWHITE);
-        DrawText(TextFormat("MIX: %.2f", mixVal), 6, 38, 8, RAYWHITE);
+        DrawText(TextFormat("DRV:%.1f SUB:%.2f", driveVal, subVal), 4, 18, 7, RAYWHITE);
+        DrawText(TextFormat("ROB:%.2f MIX:%.2f", robotVal, mixVal), 4, 27, 7, RAYWHITE);
 
-        // Mini VU Meter on OLED bottom
         float peak = currentMicPeak.load();
-        DrawRectangle(6, 50, 116, 8, DARKGRAY);
-        DrawRectangle(6, 50, static_cast<int>(std::min(peak * 116.0f, 116.0f)), 8, SKYBLUE);
+        DrawRectangle(4, 52, 120, 8, DARKGRAY);
+        DrawRectangle(4, 52, static_cast<int>(std::min(peak * 120.0f, 120.0f)), 8, SKYBLUE);
         EndTextureMode();
 
         // Main Window Drawing
         BeginDrawing();
-        ClearBackground(GetColor(0x181818FF)); // Dark pedal enclosure color
+        ClearBackground(GetColor(0x181818FF));
 
-        // Draw Pedal Title Header
-        DrawText("RP2040 VOCAL PROCESSOR", 24, 20, 20, LIGHTGRAY);
-        DrawText("Desktop DSP & OLED Simulator", 24, 45, 10, GRAY);
+        DrawText("RP2040 MULTI-EFFECTS PEDAL", 24, 15, 18, LIGHTGRAY);
+        DrawText("Active Patch: Press 'P' or button below to cycle", 24, 38, 10, GRAY);
 
-        // Draw Scaled OLED Display in Center of Pedal GUI
-        // Scale 128x64 up by 2x for readability (256x128)
+        // Draw Scaled OLED Display
         Rectangle sourceRec = { 0.0f, 0.0f, (float)oledCanvas.texture.width, (float)-oledCanvas.texture.height };
-        Rectangle destRec = { (screenWidth - 256) / 2.0f, 75.0f, 256.0f, 128.0f };
+        Rectangle destRec = { (screenWidth - 256) / 2.0f, 58.0f, 256.0f, 128.0f };
         DrawTexturePro(oledCanvas.texture, sourceRec, destRec, { 0, 0 }, 0.0f, WHITE);
 
-        // Draw Interactive Sliders
-        // 1. Drive Slider
-        DrawText("Drive (Gain)", 40, 220, 10, LIGHTGRAY);
-        // Using Raylib GUI-like slider simulation
-        float tempDrive = driveVal;
-        // Draw slider bar
-        DrawRectangle(140, 222, 280, 10, DARKGRAY);
-        DrawRectangle(140, 222, static_cast<int>((tempDrive / 12.0f) * 280.0f), 10, SKYBLUE);
-        // Check mouse click/drag on slider
         Vector2 mousePos = GetMousePosition();
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 215 && mousePos.y <= 235) {
-            float newDrive = ((mousePos.x - 140.0f) / 280.0f) * 12.0f;
-            guiDrive.store(std::clamp(newDrive, 0.0f, 12.0f));
+
+        // Preset Stomp Button
+        Rectangle presetBtnRec = { 140.0f, 195.0f, 200.0f, 32.0f };
+        bool btnHover = CheckCollisionPointRec(mousePos, presetBtnRec);
+        if (btnHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            int nextPreset = (presetIdx + 1) % demonic.getPresetCount();
+            guiActivePreset.store(nextPreset);
+        }
+        DrawRectangleRec(presetBtnRec, btnHover ? DARKBLUE : BLUE);
+        DrawRectangleLines((int)presetBtnRec.x, (int)presetBtnRec.y, (int)presetBtnRec.width, (int)presetBtnRec.height, SKYBLUE);
+        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 150, 204, 10, RAYWHITE);
+
+        // Sliders
+        // 1. Drive Slider
+        DrawText("Drive (Gain)", 40, 245, 10, LIGHTGRAY);
+        DrawRectangle(140, 247, 280, 10, DARKGRAY);
+        DrawRectangle(140, 247, static_cast<int>((driveVal / 12.0f) * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 240 && mousePos.y <= 260) {
+            float newVal = ((mousePos.x - 140.0f) / 280.0f) * 12.0f;
+            guiDrive.store(std::clamp(newVal, 0.0f, 12.0f));
         }
 
-        // 2. Sub-Octave Blend Slider
-        DrawText("Sub-Octave", 40, 260, 10, LIGHTGRAY);
-        DrawRectangle(140, 262, 280, 10, DARKGRAY);
-        DrawRectangle(140, 262, static_cast<int>(subVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 255 && mousePos.y <= 275) {
-            float newSub = (mousePos.x - 140.0f) / 280.0f;
-            guiSubBlend.store(std::clamp(newSub, 0.0f, 1.0f));
+        // 2. Sub-Octave Slider
+        DrawText("Sub-Octave", 40, 285, 10, LIGHTGRAY);
+        DrawRectangle(140, 287, 280, 10, DARKGRAY);
+        DrawRectangle(140, 287, static_cast<int>(subVal * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 280 && mousePos.y <= 300) {
+            float newVal = (mousePos.x - 140.0f) / 280.0f;
+            guiSubBlend.store(std::clamp(newVal, 0.0f, 1.0f));
         }
 
-        // 3. Wet/Dry Mix Slider
-        DrawText("Wet/Dry Mix", 40, 300, 10, LIGHTGRAY);
-        DrawRectangle(140, 302, 280, 10, DARKGRAY);
-        DrawRectangle(140, 302, static_cast<int>(mixVal * 280.0f), 10, SKYBLUE);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 295 && mousePos.y <= 315) {
-            float newMix = (mousePos.x - 140.0f) / 280.0f;
-            guiMix.store(std::clamp(newMix, 0.0f, 1.0f));
+        // 3. Robot Clank Slider
+        DrawText("Robot Clank", 40, 325, 10, LIGHTGRAY);
+        DrawRectangle(140, 327, 280, 10, DARKGRAY);
+        DrawRectangle(140, 327, static_cast<int>(robotVal * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 320 && mousePos.y <= 340) {
+            float newVal = (mousePos.x - 140.0f) / 280.0f;
+            guiRobotBlend.store(std::clamp(newVal, 0.0f, 1.0f));
+        }
+
+        // 4. Wet/Dry Mix Slider
+        DrawText("Wet/Dry Mix", 40, 365, 10, LIGHTGRAY);
+        DrawRectangle(140, 367, 280, 10, DARKGRAY);
+        DrawRectangle(140, 367, static_cast<int>(mixVal * 280.0f), 10, SKYBLUE);
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= 360 && mousePos.y <= 380) {
+            float newVal = (mousePos.x - 140.0f) / 280.0f;
+            guiMix.store(std::clamp(newVal, 0.0f, 1.0f));
         }
 
         EndDrawing();
