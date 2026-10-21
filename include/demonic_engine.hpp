@@ -7,6 +7,8 @@ struct VocalPreset {
     float driveDb;
     float subBlend;
     float robotBlend;
+    float robotFreq;
+    float chorusDepth;
     float wetDryMix;
 };
 
@@ -19,8 +21,10 @@ public:
     void setFormantShift(float cents);     
     void setSubOctaveBlend(float blend);   
     void setDrive(float driveDb);          
-    void setMix(float wetDry);             
     void setRobotBlend(float blend);       
+    void setRobotFreq(float freqHz);       // 10.0Hz to 200.0Hz
+    void setChorusDepth(float depth);      // 0.0 to 1.0
+    void setMix(float wetDry);             
 
     // Preset management
     void loadPreset(int index);
@@ -34,6 +38,8 @@ private:
     float driveDb;
     float wetDryMix;
     float robotBlend;
+    float robotFreq;
+    float chorusDepth;
 
     int currentPresetIndex;
     static const int NUM_PRESETS = 3;
@@ -47,7 +53,11 @@ private:
     float dcOutPrev;
     float lowpassState;
     float ringModPhase;
-    float ringModFreq;
+    
+    // Chorus / Delay Line state
+    float delayLine[2048];
+    size_t delayWriteHead;
+    float lfoChorusPhase;
 
     float historyBuffer[512];
     size_t writeHead;
