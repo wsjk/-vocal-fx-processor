@@ -9,12 +9,20 @@ DemonicEngine::DemonicEngine(float sr)
       spectralFreezeActive(false), lastInput(0.0f), subToggle(false), subToggleCount(0), subFilterState(0.0f), 
       dcInPrev(0.0f), dcOutPrev(0.0f), lowpassState(0.0f), ringModPhase(0.0f),
       heldSample(0.0f), decimationCounter(0), inputEnvelope(0.0f),
-      delayWriteHead(0), lfoChorusPhase(0.0f), feedbackDelayWriteHead(0), 
-      freezeReadHead(0.0f), reverbWriteHead(0) {
+      delayWriteHead(0), lfoChorusPhase(0.0f), pitchWriteHead(0), pitchPhasor(0.0f),
+      feedbackDelayWriteHead(0), freezeReadHead(0.0f),
+      comb1Head(0), comb2Head(0), comb3Head(0), comb4Head(0),
+      ap1Head(0), ap2Head(0) {
     std::fill(std::begin(delayLine), std::end(delayLine), 0.0f);
+    std::fill(std::begin(pitchBuffer), std::end(pitchBuffer), 0.0f);
     std::fill(std::begin(feedbackDelayBuffer), std::end(feedbackDelayBuffer), 0.0f);
     std::fill(std::begin(freezeBuffer), std::end(freezeBuffer), 0.0f);
-    std::fill(std::begin(reverbBuffer), std::end(reverbBuffer), 0.0f);
+    std::fill(std::begin(comb1), std::end(comb1), 0.0f);
+    std::fill(std::begin(comb2), std::end(comb2), 0.0f);
+    std::fill(std::begin(comb3), std::end(comb3), 0.0f);
+    std::fill(std::begin(comb4), std::end(comb4), 0.0f);
+    std::fill(std::begin(ap1), std::end(ap1), 0.0f);
+    std::fill(std::begin(ap2), std::end(ap2), 0.0f);
 
     presets[0] = {"DEMONIC GROWL", 11.0f, 0.85f, 0.0f,  45.0f, 1.0f, 1.0f, 0.6f,  0.35f, 0.45f, 0.85f};
     presets[1] = {"MEGATRON",       6.0f,  0.20f, 0.95f, 75.0f, 2.0f, 2.5f, 0.4f,  0.20f, 0.20f, 0.90f};
@@ -50,7 +58,8 @@ bool DemonicEngine::isSpectralFrozen() const {
 }
 
 void DemonicEngine::loadPreset(int index) {
-    currentPresetIndex = index % NUM_PRESETS;
+    currentPresetIndex = (index % NUM_PRESETS + NUM_PRESETS) % NUM_PRESETS;
+    formantCents = presets[currentPresetIndex].formantCents;
     driveDb = presets[currentPresetIndex].driveDb;
     subBlend = presets[currentPresetIndex].subBlend;
     robotBlend = presets[currentPresetIndex].robotBlend;
@@ -71,6 +80,11 @@ int DemonicEngine::getPresetCount() const {
     return NUM_PRESETS;
 }
 
+const VocalPreset& DemonicEngine::getPreset(int index) const {
+    int idx = (index % NUM_PRESETS + NUM_PRESETS) % NUM_PRESETS;
+    return presets[idx];
+}
+
 void DemonicEngine::processBlock(const float* input, float* output, size_t numFrames) {
     float gainMultiplier = std::pow(10.0f, driveDb / 20.0f);
     const float noiseGateThreshold = 0.02f;
@@ -85,11 +99,11 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         // 1. Chorus Doubler
         delayLine[delayWriteHead] = activeSignal;
         float chorusLfo = std::sin(lfoChorusPhase);
-        lfoChorusPhase += (2.0f * M_PI * 0.5f) / sampleRate;
-        if (lfoChorusPhase >= 2.0f * M_PI) lfoChorusPhase -= 2.0f * M_PI;
+        lfoChorusPhase += (kTwoPi * 0.5f) / sampleRate;
+        if (lfoChorusPhase >= kTwoPi) lfoChorusPhase -= kTwoPi;
 
-        float delaySamples = 441.0f + (chorusLfo * 0.3f * 220.0f);
-        float readIdxFloat = static_cast<float>(delayWriteHead) - delaySamples;
+        float chorusDelaySamples = 441.0f + (chorusLfo * 0.3f * 220.0f);
+        float readIdxFloat = static_cast<float>(delayWriteHead) - chorusDelaySamples;
         while (readIdxFloat < 0.0f) readIdxFloat += 2048.0f;
         size_t idx1 = static_cast<size_t>(readIdxFloat) % 2048;
         size_t idx2 = (idx1 + 1) % 2048;
@@ -99,27 +113,70 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         float widenedVoice = activeSignal + (doubledVoice * 0.3f);
         delayWriteHead = (delayWriteHead + 1) % 2048;
 
-        // 2. Sub-Octave
-        if ((widenedVoice > 0.0f && lastInput <= 0.0f) || (widenedVoice < 0.0f && lastInput >= 0.0f)) {
-            if (std::abs(widenedVoice) > noiseGateThreshold) {
+        // 1b. Granular Pitch / Formant Shift
+        pitchBuffer[pitchWriteHead] = widenedVoice;
+        if (std::abs(formantCents) > 1.0f) {
+            float pitchRatio = std::pow(2.0f, formantCents / 1200.0f);
+            constexpr float kGrainWindow = 1024.0f;
+            float phaseInc = (1.0f - pitchRatio) / kGrainWindow;
+            pitchPhasor += phaseInc;
+            if (pitchPhasor >= 1.0f) pitchPhasor -= 1.0f;
+            if (pitchPhasor < 0.0f) pitchPhasor += 1.0f;
+
+            float tap1 = pitchPhasor * kGrainWindow;
+            float p2 = pitchPhasor + 0.5f;
+            if (p2 >= 1.0f) p2 -= 1.0f;
+            float tap2 = p2 * kGrainWindow;
+
+            // Hann window weights
+            float w1 = 0.5f * (1.0f - std::cos(kTwoPi * pitchPhasor));
+            float w2 = 1.0f - w1;
+
+            float r1 = static_cast<float>(pitchWriteHead) - tap1;
+            while (r1 < 0.0f) r1 += static_cast<float>(PITCH_BUFFER_SIZE);
+            size_t pIdx1 = static_cast<size_t>(r1) % PITCH_BUFFER_SIZE;
+            size_t pIdx2 = (pIdx1 + 1) % PITCH_BUFFER_SIZE;
+            float f1 = r1 - static_cast<float>(pIdx1);
+            float s1 = pitchBuffer[pIdx1] * (1.0f - f1) + pitchBuffer[pIdx2] * f1;
+
+            float r2 = static_cast<float>(pitchWriteHead) - tap2;
+            while (r2 < 0.0f) r2 += static_cast<float>(PITCH_BUFFER_SIZE);
+            size_t qIdx1 = static_cast<size_t>(r2) % PITCH_BUFFER_SIZE;
+            size_t qIdx2 = (qIdx1 + 1) % PITCH_BUFFER_SIZE;
+            float f2 = r2 - static_cast<float>(qIdx1);
+            float s2 = pitchBuffer[qIdx1] * (1.0f - f2) + pitchBuffer[qIdx2] * f2;
+
+            widenedVoice = s1 * w1 + s2 * w2;
+        }
+        pitchWriteHead = (pitchWriteHead + 1) % PITCH_BUFFER_SIZE;
+
+        // 2. Sub-Octave Divider (lowpass fundamental tracking on raw input + Schmitt trigger hysteresis)
+        // Decoupled from noise gate so zero-crossings are continuous and uncorrupted
+        float subLpAlpha = (kTwoPi * 160.0f) / sampleRate;
+        subLpState += subLpAlpha * (dry - subLpState);
+
+        constexpr float kHysteresis = 0.025f;
+        if (inputEnvelope > noiseGateThreshold * 0.5f) {
+            if (subLpState < -kHysteresis) {
+                subArmed = true;
+            } else if (subLpState > kHysteresis && subArmed) {
                 subToggle = !subToggle;
                 subToggleCount++;
             }
         }
-        lastInput = widenedVoice;
 
         float rawSub = subToggle ? 1.0f : -1.0f;
-        subFilterState = subFilterState + 0.04f * (rawSub - subFilterState);
-        float subOctave = subFilterState * std::abs(widenedVoice) * subBlend * 1.8f;
+        subFilterState += 0.04f * (rawSub - subFilterState);
+        float subOctave = subFilterState * inputEnvelope * subBlend * 1.8f;
 
         float wet = widenedVoice + subOctave;
 
         // 3. Ring Mod
         float dynamicFreq = robotFreq + (inputEnvelope * 40.0f);
-        float phaseInc = (2.0f * M_PI * dynamicFreq) / sampleRate;
+        float phaseInc = (kTwoPi * dynamicFreq) / sampleRate;
         float lfo = std::sin(ringModPhase);
         ringModPhase += phaseInc;
-        if (ringModPhase >= 2.0f * M_PI) ringModPhase -= 2.0f * M_PI;
+        if (ringModPhase >= kTwoPi) ringModPhase -= kTwoPi;
         
         float roboticSignal = wet * lfo;
         wet = (wet * (1.0f - robotBlend)) + (roboticSignal * robotBlend * 1.5f);
@@ -183,7 +240,22 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         reverbBuffer[reverbWriteHead] = wet + (reverbEcho * 0.5f);
         reverbWriteHead = (reverbWriteHead + 1) % 16384;
 
-        wet = (wet * (1.0f - reverbMix)) + (reverbEcho * reverbMix);
+        float combSum = (c1 + c2 + c3 + c4) * 0.25f;
+
+        // Allpass diffuser 1 (gain = 0.5)
+        float ap1Buf = ap1[ap1Head];
+        float ap1Out = -0.5f * combSum + ap1Buf;
+        ap1[ap1Head] = combSum + 0.5f * ap1Out;
+        ap1Head = (ap1Head + 1 == AP1_LEN) ? 0 : ap1Head + 1;
+
+        // Allpass diffuser 2 (gain = 0.5)
+        float ap2Buf = ap2[ap2Head];
+        float ap2Out = -0.5f * ap1Out + ap2Buf;
+        ap2[ap2Head] = ap1Out + 0.5f * ap2Out;
+        ap2Head = (ap2Head + 1 == AP2_LEN) ? 0 : ap2Head + 1;
+
+        float reverbSignal = ap2Out;
+        wet = (wet * (1.0f - reverbMix)) + (reverbSignal * reverbMix);
 
         // 10. DC Blocker Filter
         float dcBlocked = wet - dcInPrev + 0.995f * dcOutPrev;
@@ -191,6 +263,11 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         dcOutPrev = dcBlocked;
         wet = dcBlocked;
 
-        output[i] = (dry * (1.0f - wetDryMix)) + (wet * wetDryMix);
+        // Safety output limiter & clamp to prevent clipping
+        float finalOut = (dry * (1.0f - wetDryMix)) + (wet * wetDryMix);
+        if (finalOut > 1.0f || finalOut < -1.0f) {
+            finalOut = std::tanh(finalOut);
+        }
+        output[i] = std::clamp(finalOut, -1.0f, 1.0f);
     }
 }

@@ -1,9 +1,14 @@
 #pragma once
 #include <vector>
 #include <cstdint>
+#include <cstddef>
+
+constexpr float kPi = 3.14159265358979323846f;
+constexpr float kTwoPi = 2.0f * kPi;
 
 struct VocalPreset {
     const char* name;
+    float formantCents;  // Pitch / formant shift in cents (-1200 to +1200)
     float driveDb;
     float subBlend;
     float robotBlend;
@@ -39,6 +44,11 @@ public:
     void loadPreset(int index);
     const char* getCurrentPresetName() const;
     int getPresetCount() const;
+    const VocalPreset& getPreset(int index) const;
+
+    // Diagnostic accessors
+    int getSubToggleCount() const { return subToggleCounter; }
+    void resetSubToggleCount() { subToggleCounter = 0; }
 
     // Test accessors
     void resetSubToggleCount() { subToggleCount = 0; }
@@ -68,6 +78,8 @@ private:
     bool subToggle;
     int subToggleCount;
     float subFilterState;
+    int subToggleCounter;
+
     float dcInPrev;
     float dcOutPrev;
     float lowpassState;
