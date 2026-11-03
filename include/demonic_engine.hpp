@@ -15,8 +15,8 @@ struct VocalPreset {
     float robotFreq;
     float wavefoldDrive;
     float decimationFactor;
-    float delayFeedback; // 0.0 to 1.05 (Infinite Repeat)
-    float delayMix;      // 0.0 to 1.0
+    float delayFeedback;
+    float delayMix;
     float reverbMix;
     float wetDryMix;
 };
@@ -33,12 +33,12 @@ public:
     void setRobotFreq(float freqHz);       
     void setWavefold(float foldDrive);     
     void setDecimation(float factor);      
-    void setDelayFeedback(float feedback); // 0.0 to 1.05
-    void setDelayMix(float mix);           // 0.0 to 1.0
+    void setDelayFeedback(float feedback); 
+    void setDelayMix(float mix);           
     void setReverbMix(float revMix);       
     void setMix(float wetDry);             
     
-    void setSpectralFreeze(bool freeze);   // Infinite Sustain Toggle
+    void setSpectralFreeze(bool freeze);   
     bool isSpectralFrozen() const;
 
     void loadPreset(int index);
@@ -49,6 +49,10 @@ public:
     // Diagnostic accessors
     int getSubToggleCount() const { return subToggleCounter; }
     void resetSubToggleCount() { subToggleCounter = 0; }
+
+    // Test accessors
+    void resetSubToggleCount() { subToggleCount = 0; }
+    int getSubToggleCount() const { return subToggleCount; }
 
 private:
     float sampleRate;
@@ -69,9 +73,10 @@ private:
     static const int NUM_PRESETS = 3;
     VocalPreset presets[NUM_PRESETS];
 
+    // DSP State & Buffers
+    float lastInput;
     bool subToggle;
-    bool subArmed;
-    float subLpState;
+    int subToggleCount;
     float subFilterState;
     int subToggleCounter;
 
@@ -89,39 +94,15 @@ private:
     size_t delayWriteHead;
     float lfoChorusPhase;
 
-    // Granular pitch / formant shift buffer
-    static constexpr size_t PITCH_BUFFER_SIZE = 2048;
-    float pitchBuffer[PITCH_BUFFER_SIZE];
-    size_t pitchWriteHead;
-    float pitchPhasor;
-
-    // Feedback Delay Buffer (~500ms for Echo / Infinite Repeat)
+    // Feedback Delay Buffer (~500ms)
     float feedbackDelayBuffer[22050];
     size_t feedbackDelayWriteHead;
 
-    // Spectral Freeze Buffer (~4096 samples for Infinite Sustain Drone)
+    // Spectral Freeze Buffer
     float freezeBuffer[4096];
     float freezeReadHead;
 
-    // Catacomb Reverb (Schroeder reverberator: 4 parallel comb filters + 2 series allpass diffusers)
-    static constexpr size_t COMB1_LEN = 1553;
-    static constexpr size_t COMB2_LEN = 1699;
-    static constexpr size_t COMB3_LEN = 1787;
-    static constexpr size_t COMB4_LEN = 1973;
-    static constexpr size_t AP1_LEN = 347;
-    static constexpr size_t AP2_LEN = 113;
-
-    float comb1[COMB1_LEN];
-    float comb2[COMB2_LEN];
-    float comb3[COMB3_LEN];
-    float comb4[COMB4_LEN];
-    size_t comb1Head;
-    size_t comb2Head;
-    size_t comb3Head;
-    size_t comb4Head;
-
-    float ap1[AP1_LEN];
-    float ap2[AP2_LEN];
-    size_t ap1Head;
-    size_t ap2Head;
+    // Catacomb Reverb Buffer
+    float reverbBuffer[16384];
+    size_t reverbWriteHead;
 };

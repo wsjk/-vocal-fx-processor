@@ -115,9 +115,9 @@ int main() {
     }
     Pa_StartStream(stream);
 
-    const int screenWidth = 480;
-    const int screenHeight = 660;
-    InitWindow(screenWidth, screenHeight, "Demonic Pedal - Freeze & Infinite Repeat");
+    const int screenWidth = 520;
+    const int screenHeight = 700;
+    InitWindow(screenWidth, screenHeight, "Demonic Pedal - Large Font UI");
     SetTargetFPS(60);
 
     RenderTexture2D oledCanvas = LoadRenderTexture(128, 64);
@@ -152,7 +152,7 @@ int main() {
         DrawRectangleLines(0, 0, 128, 64, BLUE);
         DrawText(TextFormat("PSET:%s", demonic.getCurrentPresetName()), 2, 2, 7, SKYBLUE);
         if (freezeActive) {
-            DrawText(" [FREEZE ON]", 75, 2, 7, RED);
+            DrawText(" [FREEZE ON]", 70, 2, 7, RED);
         }
 
         size_t head = scopeHead.load();
@@ -176,17 +176,17 @@ int main() {
         BeginDrawing();
         ClearBackground(GetColor(0x181818FF));
 
-        DrawText("RP2040 MASTER PROCESSOR + SUSTAIN", 24, 10, 15, LIGHTGRAY);
-        DrawText("Press 'P' to cycle preset | Press 'F' to toggle Freeze", 24, 28, 10, GRAY);
+        DrawText("RP2040 MASTER PROCESSOR + SUSTAIN", 24, 12, 17, LIGHTGRAY);
+        DrawText("Press 'P' to cycle preset | Press 'F' to toggle Freeze", 24, 34, 12, GRAY);
 
         Rectangle sourceRec = { 0.0f, 0.0f, (float)oledCanvas.texture.width, (float)-oledCanvas.texture.height };
-        Rectangle destRec = { (screenWidth - 256) / 2.0f, 46.0f, 256.0f, 128.0f };
+        Rectangle destRec = { (screenWidth - 280) / 2.0f, 56.0f, 280.0f, 140.0f };
         DrawTexturePro(oledCanvas.texture, sourceRec, destRec, { 0, 0 }, 0.0f, WHITE);
 
         Vector2 mousePos = GetMousePosition();
 
         // Preset Button
-        Rectangle presetBtnRec = { 40.0f, 180.0f, 190.0f, 28.0f };
+        Rectangle presetBtnRec = { 30.0f, 206.0f, 220.0f, 32.0f };
         bool btnHover = CheckCollisionPointRec(mousePos, presetBtnRec);
         if (btnHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             int nextPreset = (presetIdx + 1) % demonic.getPresetCount();
@@ -194,30 +194,30 @@ int main() {
         }
         DrawRectangleRec(presetBtnRec, btnHover ? DARKBLUE : BLUE);
         DrawRectangleLines((int)presetBtnRec.x, (int)presetBtnRec.y, (int)presetBtnRec.width, (int)presetBtnRec.height, SKYBLUE);
-        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 48, 187, 10, RAYWHITE);
+        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 38, 214, 13, RAYWHITE);
 
         // Freeze Toggle Button ('F')
-        Rectangle freezeBtnRec = { 250.0f, 180.0f, 190.0f, 28.0f };
+        Rectangle freezeBtnRec = { 270.0f, 206.0f, 220.0f, 32.0f };
         bool freezeHover = CheckCollisionPointRec(mousePos, freezeBtnRec);
         if (freezeHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             guiSpectralFreeze.store(!freezeActive);
         }
         DrawRectangleRec(freezeBtnRec, freezeActive ? RED : (freezeHover ? DARKGRAY : BLACK));
         DrawRectangleLines((int)freezeBtnRec.x, (int)freezeBtnRec.y, (int)freezeBtnRec.width, (int)freezeBtnRec.height, RED);
-        DrawText(freezeActive ? "SPECTRAL FREEZE: ON" : "SPECTRAL FREEZE: OFF", 258, 187, 10, RAYWHITE);
+        DrawText(freezeActive ? "FREEZE: ON [F]" : "FREEZE: OFF [F]", 310, 214, 13, RAYWHITE);
 
-        // Sliders
-        float yPos = 216.0f;
+        // Sliders with Larger Fonts & Spacing
+        float yPos = 256.0f;
         auto drawSlider = [&](const char* label, float val, float minV, float maxV, std::atomic<float>& target) {
-            DrawText(label, 40, yPos + 2, 10, LIGHTGRAY);
-            DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
+            DrawText(label, 30, yPos + 4, 13, LIGHTGRAY);
+            DrawRectangle(150, yPos + 6, 340, 14, DARKGRAY);
             float ratio = (val - minV) / (maxV - minV);
-            DrawRectangle(140, yPos + 4, static_cast<int>(ratio * 280.0f), 10, SKYBLUE);
-            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
-                float newVal = minV + ((mousePos.x - 140.0f) / 280.0f) * (maxV - minV);
+            DrawRectangle(150, yPos + 6, static_cast<int>(ratio * 340.0f), 14, SKYBLUE);
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 150 && mousePos.x <= 490 && mousePos.y >= yPos && mousePos.y <= yPos + 26) {
+                float newVal = minV + ((mousePos.x - 150.0f) / 340.0f) * (maxV - minV);
                 target.store(std::clamp(newVal, minV, maxV));
             }
-            yPos += 34.0f;
+            yPos += 38.0f;
         };
 
         drawSlider("Pitch (Cents)", pitchVal, -1200.0f, 1200.0f, guiPitch);
