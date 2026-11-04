@@ -1,22 +1,17 @@
 #pragma once
-#include <vector>
-#include <cstdint>
 #include <cstddef>
-
-constexpr float kPi = 3.14159265358979323846f;
-constexpr float kTwoPi = 2.0f * kPi;
+#include <cstdint>
 
 struct VocalPreset {
     const char* name;
-    float formantCents;  // Pitch / formant shift in cents (-1200 to +1200)
     float driveDb;
     float subBlend;
     float robotBlend;
     float robotFreq;
     float wavefoldDrive;
     float decimationFactor;
-    float delayFeedback;
-    float delayMix;
+    float delayFeedback; // 0.0 to 1.05 (Infinite Repeat)
+    float delayMix;      // 0.0 to 1.0
     float reverbMix;
     float wetDryMix;
 };
@@ -26,37 +21,32 @@ public:
     DemonicEngine(float sampleRate);
     void processBlock(const float* input, float* output, size_t numFrames);
     
-    void setFormantShift(float cents);     
+    // Pitch shift in cents (100 cents = 1 semitone). Range -1200..+1200. 0 = bypassed.
+    void setPitchShift(float cents);
+    // Kept for compatibility with older code: forwards to setPitchShift().
+    // (The shifter moves pitch AND formants together, so "formant" was a misnomer.)
+    void setFormantShift(float cents);
     void setSubOctaveBlend(float blend);   
     void setDrive(float driveDb);          
     void setRobotBlend(float blend);       
     void setRobotFreq(float freqHz);       
     void setWavefold(float foldDrive);     
     void setDecimation(float factor);      
-    void setDelayFeedback(float feedback); 
-    void setDelayMix(float mix);           
+    void setDelayFeedback(float feedback); // 0.0 to 1.05
+    void setDelayMix(float mix);           // 0.0 to 1.0
     void setReverbMix(float revMix);       
     void setMix(float wetDry);             
     
-    void setSpectralFreeze(bool freeze);   
+    void setSpectralFreeze(bool freeze);   // Infinite Sustain Toggle
     bool isSpectralFrozen() const;
 
     void loadPreset(int index);
     const char* getCurrentPresetName() const;
     int getPresetCount() const;
-    const VocalPreset& getPreset(int index) const;
-
-    // Diagnostic accessors
-    int getSubToggleCount() const { return subToggleCounter; }
-    void resetSubToggleCount() { subToggleCounter = 0; }
-
-    // Test accessors
-    void resetSubToggleCount() { subToggleCount = 0; }
-    int getSubToggleCount() const { return subToggleCount; }
 
 private:
     float sampleRate;
-    float formantCents;
+    float pitchCents;
     float subBlend;
     float driveDb;
     float wetDryMix;
@@ -73,13 +63,13 @@ private:
     static const int NUM_PRESETS = 3;
     VocalPreset presets[NUM_PRESETS];
 
-    // DSP State & Buffers
-    float lastInput;
+    // Sub-octave: Schmitt-trigger octave divider (see processBlock stage 2)
+    float subDetLP1;       // 2-pole low-pass of the voice, used only for pitch detection
+    float subDetLP2;
+    float subDetEnv;       // envelope of the detection signal (sets hysteresis / silence gate)
+    bool subArmed;         // true once the detector has swung negative and may fire again
     bool subToggle;
-    int subToggleCount;
     float subFilterState;
-    int subToggleCounter;
-
     float dcInPrev;
     float dcOutPrev;
     float lowpassState;
@@ -89,20 +79,26 @@ private:
     int decimationCounter;
     float inputEnvelope;
 
+    // Pitch shifter: two crossfaded, sweeping delay taps (2048 samples >= window + margin)
+    float pitchBuffer[2048];
+    size_t pitchWriteHead;
+    float pitchPhase;      // 0..1, position of tap 1 within the sweep
+    float pitchBlend;      // 0 = bypass, 1 = fully shifted (smoothed to avoid clicks)
+
     // Chorus delay line
     float delayLine[2048];
     size_t delayWriteHead;
     float lfoChorusPhase;
 
-    // Feedback Delay Buffer (~500ms)
+    // Feedback Delay Buffer (~500ms for Echo / Infinite Repeat)
     float feedbackDelayBuffer[22050];
     size_t feedbackDelayWriteHead;
 
-    // Spectral Freeze Buffer
+    // Spectral Freeze Buffer (~4096 samples for Infinite Sustain Drone)
     float freezeBuffer[4096];
     float freezeReadHead;
 
-    // Catacomb Reverb Buffer
+    // Reverb buffer
     float reverbBuffer[16384];
     size_t reverbWriteHead;
 };

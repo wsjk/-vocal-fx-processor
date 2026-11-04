@@ -12,15 +12,15 @@
 
 DemonicEngine demonic(SAMPLE_RATE);
 
-std::atomic<float> guiPitch(-500.0f);
+std::atomic<float> guiPitch(0.0f);          // pitch shift in cents (0 = bypass)
 std::atomic<float> guiDrive(11.0f);
 std::atomic<float> guiSubBlend(0.85f);
 std::atomic<float> guiRobotBlend(0.0f);
-std::atomic<float> guiRobotFreq(45.0f);
-std::atomic<float> guiWavefold(1.0f);
+std::atomic<float> guiRobotFreq(55.0f);
+std::atomic<float> guiWavefold(1.5f);
 std::atomic<float> guiDecimation(1.0f);
-std::atomic<float> guiDelayFB(0.6f);
-std::atomic<float> guiDelayMix(0.35f);
+std::atomic<float> guiDelayFB(0.5f);
+std::atomic<float> guiDelayMix(0.3f);
 std::atomic<float> guiReverb(0.45f);
 std::atomic<float> guiMix(0.85f);
 std::atomic<int>   guiActivePreset(0);
@@ -31,38 +31,22 @@ constexpr size_t SCOPE_SIZE = 128;
 float scopeBuffer[SCOPE_SIZE] = {0};
 std::atomic<size_t> scopeHead(0);
 
-// Synchronize GUI slider atomics and engine with preset data
-void selectPreset(int idx) {
-    const VocalPreset& p = demonic.getPreset(idx);
-    guiPitch.store(p.formantCents);
-    guiDrive.store(p.driveDb);
-    guiSubBlend.store(p.subBlend);
-    guiRobotBlend.store(p.robotBlend);
-    guiRobotFreq.store(p.robotFreq);
-    guiWavefold.store(p.wavefoldDrive);
-    guiDecimation.store(p.decimationFactor);
-    guiDelayFB.store(p.delayFeedback);
-    guiDelayMix.store(p.delayMix);
-    guiReverb.store(p.reverbMix);
-    guiMix.store(p.wetDryMix);
-    guiActivePreset.store(idx);
-    demonic.loadPreset(idx);
-}
-
 static int audioCallback(const void* inputBuffer, void* outputBuffer,
                          unsigned long framesPerBuffer,
                          const PaStreamCallbackTimeInfo* timeInfo,
                          PaStreamCallbackFlags statusFlags,
                          void* userData) {
-    (void)timeInfo;
-    (void)statusFlags;
-    (void)userData;
-
     const float* in = static_cast<const float*>(inputBuffer);
     float* out = static_cast<float*>(outputBuffer);
 
-    // Apply control parameter values from GUI atomics to engine
-    demonic.setFormantShift(guiPitch.load());
+    static int lastPreset = -1;
+    int currentPreset = guiActivePreset.load();
+    if (currentPreset != lastPreset) {
+        demonic.loadPreset(currentPreset);
+        lastPreset = currentPreset;
+    }
+
+    demonic.setPitchShift(guiPitch.load());
     demonic.setDrive(guiDrive.load());
     demonic.setSubOctaveBlend(guiSubBlend.load());
     demonic.setRobotBlend(guiRobotBlend.load());
@@ -97,9 +81,6 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
 }
 
 int main() {
-    // Initialize GUI slider atomics from default preset 0
-    selectPreset(0);
-
     PaError err = Pa_Initialize();
     if (err != paNoError) {
         std::cerr << "PortAudio error: " << Pa_GetErrorText(err) << "\n";
@@ -115,9 +96,9 @@ int main() {
     }
     Pa_StartStream(stream);
 
-    const int screenWidth = 520;
-    const int screenHeight = 700;
-    InitWindow(screenWidth, screenHeight, "Demonic Pedal - Large Font UI");
+    const int screenWidth = 480;
+    const int screenHeight = 630;
+    InitWindow(screenWidth, screenHeight, "Demonic Pedal - Freeze & Infinite Repeat");
     SetTargetFPS(60);
 
     RenderTexture2D oledCanvas = LoadRenderTexture(128, 64);
@@ -125,7 +106,7 @@ int main() {
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_P)) {
             int nextPreset = (guiActivePreset.load() + 1) % demonic.getPresetCount();
-            selectPreset(nextPreset);
+            guiActivePreset.store(nextPreset);
         }
         if (IsKeyPressed(KEY_F)) {
             bool currentFreeze = guiSpectralFreeze.load();
@@ -150,9 +131,9 @@ int main() {
         ClearBackground(BLACK);
         
         DrawRectangleLines(0, 0, 128, 64, BLUE);
-        DrawText(TextFormat("PSET:%s", demonic.getCurrentPresetName()), 2, 2, 7, SKYBLUE);
+        DrawText(TextFormat("PTCH:%s", demonic.getCurrentPresetName()), 2, 2, 7, SKYBLUE);
         if (freezeActive) {
-            DrawText(" [FREEZE ON]", 70, 2, 7, RED);
+            DrawText(" [FREEZE ON]", 75, 2, 7, RED);
         }
 
         size_t head = scopeHead.load();
@@ -176,58 +157,60 @@ int main() {
         BeginDrawing();
         ClearBackground(GetColor(0x181818FF));
 
-        DrawText("RP2040 MASTER PROCESSOR + SUSTAIN", 24, 12, 17, LIGHTGRAY);
-        DrawText("Press 'P' to cycle preset | Press 'F' to toggle Freeze", 24, 34, 12, GRAY);
+        DrawText("RP2040 MASTER PROCESSOR + SUSTAIN", 24, 10, 15, LIGHTGRAY);
+        DrawText("Press 'P' to cycle preset | Press 'F' to toggle Freeze", 24, 28, 10, GRAY);
 
         Rectangle sourceRec = { 0.0f, 0.0f, (float)oledCanvas.texture.width, (float)-oledCanvas.texture.height };
-        Rectangle destRec = { (screenWidth - 280) / 2.0f, 56.0f, 280.0f, 140.0f };
+        Rectangle destRec = { (screenWidth - 256) / 2.0f, 46.0f, 256.0f, 128.0f };
         DrawTexturePro(oledCanvas.texture, sourceRec, destRec, { 0, 0 }, 0.0f, WHITE);
 
         Vector2 mousePos = GetMousePosition();
 
         // Preset Button
-        Rectangle presetBtnRec = { 30.0f, 206.0f, 220.0f, 32.0f };
+        Rectangle presetBtnRec = { 40.0f, 180.0f, 190.0f, 28.0f };
         bool btnHover = CheckCollisionPointRec(mousePos, presetBtnRec);
         if (btnHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             int nextPreset = (presetIdx + 1) % demonic.getPresetCount();
-            selectPreset(nextPreset);
+            guiActivePreset.store(nextPreset);
         }
         DrawRectangleRec(presetBtnRec, btnHover ? DARKBLUE : BLUE);
         DrawRectangleLines((int)presetBtnRec.x, (int)presetBtnRec.y, (int)presetBtnRec.width, (int)presetBtnRec.height, SKYBLUE);
-        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 38, 214, 13, RAYWHITE);
+        DrawText(TextFormat("PRESET: %s", demonic.getCurrentPresetName()), 48, 187, 10, RAYWHITE);
 
         // Freeze Toggle Button ('F')
-        Rectangle freezeBtnRec = { 270.0f, 206.0f, 220.0f, 32.0f };
+        Rectangle freezeBtnRec = { 250.0f, 180.0f, 190.0f, 28.0f };
         bool freezeHover = CheckCollisionPointRec(mousePos, freezeBtnRec);
         if (freezeHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             guiSpectralFreeze.store(!freezeActive);
         }
         DrawRectangleRec(freezeBtnRec, freezeActive ? RED : (freezeHover ? DARKGRAY : BLACK));
         DrawRectangleLines((int)freezeBtnRec.x, (int)freezeBtnRec.y, (int)freezeBtnRec.width, (int)freezeBtnRec.height, RED);
-        DrawText(freezeActive ? "FREEZE: ON [F]" : "FREEZE: OFF [F]", 310, 214, 13, RAYWHITE);
+        DrawText(freezeActive ? "SPECTRAL FREEZE: ON" : "SPECTRAL FREEZE: OFF", 258, 187, 10, RAYWHITE);
 
-        // Sliders with Larger Fonts & Spacing
-        float yPos = 256.0f;
-        auto drawSlider = [&](const char* label, float val, float minV, float maxV, std::atomic<float>& target) {
-            DrawText(label, 30, yPos + 4, 13, LIGHTGRAY);
-            DrawRectangle(150, yPos + 6, 340, 14, DARKGRAY);
+        // Sliders
+        float yPos = 220.0f;
+        auto drawSlider = [&](const char* label, float val, float minV, float maxV, std::atomic<float>& target, bool snapToZero = false) {
+            DrawText(label, 40, yPos + 2, 10, LIGHTGRAY);
+            DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
             float ratio = (val - minV) / (maxV - minV);
-            DrawRectangle(150, yPos + 6, static_cast<int>(ratio * 340.0f), 14, SKYBLUE);
-            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 150 && mousePos.x <= 490 && mousePos.y >= yPos && mousePos.y <= yPos + 26) {
-                float newVal = minV + ((mousePos.x - 150.0f) / 340.0f) * (maxV - minV);
-                target.store(std::clamp(newVal, minV, maxV));
+            DrawRectangle(140, yPos + 4, static_cast<int>(ratio * 280.0f), 10, SKYBLUE);
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && mousePos.x >= 140 && mousePos.x <= 420 && mousePos.y >= yPos && mousePos.y <= yPos + 20) {
+                float newVal = minV + ((mousePos.x - 140.0f) / 280.0f) * (maxV - minV);
+                newVal = std::clamp(newVal, minV, maxV);
+                if (snapToZero && std::abs(newVal) < 0.02f * (maxV - minV)) newVal = 0.0f;   // easy-to-hit "off"
+                target.store(newVal);
             }
-            yPos += 38.0f;
+            yPos += 34.0f;
         };
 
-        drawSlider("Pitch (Cents)", pitchVal, -1200.0f, 1200.0f, guiPitch);
+        drawSlider(TextFormat("Pitch %+.1f st", pitchVal / 100.0f), pitchVal, -1200.0f, 1200.0f, guiPitch, true);
         drawSlider("Drive (Gain)", driveVal, 0.0f, 12.0f, guiDrive);
         drawSlider("Sub-Octave", subVal, 0.0f, 1.0f, guiSubBlend);
         drawSlider("Robot Clank", robotVal, 0.0f, 1.0f, guiRobotBlend);
         drawSlider("Clank Rate", freqVal, 10.0f, 200.0f, guiRobotFreq);
         drawSlider("Wavefolder", foldVal, 0.0f, 5.0f, guiWavefold);
         drawSlider("Decimation", decimVal, 1.0f, 6.0f, guiDecimation);
-        drawSlider("Delay Feedback", fbVal, 0.0f, 1.05f, guiDelayFB);
+        drawSlider("Delay Feedback", fbVal, 0.0f, 1.05f, guiDelayFB); // >1.0 creates infinite repeat / self-oscillation
         drawSlider("Delay Mix", delayMixVal, 0.0f, 1.0f, guiDelayMix);
         drawSlider("Catacomb Rev", revVal, 0.0f, 1.0f, guiReverb);
         drawSlider("Wet/Dry Mix", mixVal, 0.0f, 1.0f, guiMix);
