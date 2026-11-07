@@ -40,7 +40,8 @@ DemonicEngine::DemonicEngine(float sr)
       heldSample(0.0f), decimationCounter(0), inputEnvelope(0.0f),
       pitchWriteHead(0), pitchPhase(0.0f), pitchBlend(0.0f),
       delayWriteHead(0), lfoChorusPhase(0.0f), feedbackDelayWriteHead(0),
-      freezeReadHead(0.0f), reverbWriteHead(0) {
+      freezeReadHead(0.0f), reverbWriteHead(0),
+      bypassTarget(false), bypassBlend(0.0f), bypassStateCleared(false) {
     std::fill(std::begin(pitchBuffer), std::end(pitchBuffer), 0.0f);
     std::fill(std::begin(delayLine), std::end(delayLine), 0.0f);
     std::fill(std::begin(feedbackDelayBuffer), std::end(feedbackDelayBuffer), 0.0f);
@@ -68,7 +69,28 @@ void DemonicEngine::setDelayMix(float mix) { delayMix = mix; }
 void DemonicEngine::setReverbMix(float revMix) { reverbMix = revMix; }
 void DemonicEngine::setMix(float mix) { wetDryMix = mix; }
 
+void DemonicEngine::setBypass(bool bypass) {
+    bypassTarget = bypass;
+    if (bypass) spectralFreezeActive = false;   // a frozen loop cannot survive a bypass
+}
+bool DemonicEngine::isBypassed() const { return bypassTarget; }
+
+void DemonicEngine::resetState() {
+    std::fill(std::begin(pitchBuffer), std::end(pitchBuffer), 0.0f);
+    std::fill(std::begin(delayLine), std::end(delayLine), 0.0f);
+    std::fill(std::begin(feedbackDelayBuffer), std::end(feedbackDelayBuffer), 0.0f);
+    std::fill(std::begin(freezeBuffer), std::end(freezeBuffer), 0.0f);
+    std::fill(std::begin(reverbBuffer), std::end(reverbBuffer), 0.0f);
+    pitchWriteHead = 0; pitchPhase = 0.0f; pitchBlend = 0.0f;
+    subDetLP1 = subDetLP2 = subDetEnv = 0.0f; subArmed = false; subToggle = false; subFilterState = 0.0f;
+    dcInPrev = dcOutPrev = lowpassState = ringModPhase = heldSample = 0.0f;
+    decimationCounter = 0; inputEnvelope = 0.0f;
+    delayWriteHead = 0; lfoChorusPhase = 0.0f; feedbackDelayWriteHead = 0;
+    freezeReadHead = 0.0f; reverbWriteHead = 0;
+}
+
 void DemonicEngine::setSpectralFreeze(bool freeze) {
+    if (freeze && bypassTarget) return;   // nothing to freeze while the effects are off
     if (freeze && !spectralFreezeActive) {
         // Capture current audio frame block into freeze buffer for infinite sustain drone
         for (size_t i = 0; i < 4096; ++i) {
@@ -106,6 +128,16 @@ int DemonicEngine::getPresetCount() const {
 }
 
 void DemonicEngine::processBlock(const float* input, float* output, size_t numFrames) {
+    // True bypass: once the crossfade to "dry only" has finished, copy the input straight through and
+    // skip all DSP. The effect memory is wiped once, so a runaway echo loop is also cleared this way.
+    if (bypassTarget && bypassBlend >= 1.0f) {
+        if (!bypassStateCleared) { resetState(); bypassStateCleared = true; }
+        for (size_t i = 0; i < numFrames; ++i) output[i] = input[i];
+        return;
+    }
+    bypassStateCleared = false;
+    const float bypassStep = 1.0f / (0.005f * sampleRate);   // full crossfade takes 5 ms
+
     float gainMultiplier = std::pow(10.0f, driveDb / 20.0f);
     const float noiseGateThreshold = 0.02f;
     int decimationStep = std::max(1, static_cast<int>(decimationFactor));
@@ -261,6 +293,12 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         dcOutPrev = dcBlocked;
         wet = dcBlocked;
 
-        output[i] = (dry * (1.0f - wetDryMix)) + (wet * wetDryMix);
+        float processed = (dry * (1.0f - wetDryMix)) + (wet * wetDryMix);
+
+        // Crossfade to / from the untouched input when bypass is switched.
+        if (bypassTarget) bypassBlend = std::min(1.0f, bypassBlend + bypassStep);
+        else if (bypassBlend > 0.0f) bypassBlend = std::max(0.0f, bypassBlend - bypassStep);
+        output[i] = (bypassBlend >= 1.0f) ? dry                    // exact, and immune to a blown-up chain
+                                          : processed * (1.0f - bypassBlend) + dry * bypassBlend;
     }
 }

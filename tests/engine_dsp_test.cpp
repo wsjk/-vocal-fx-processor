@@ -202,6 +202,126 @@ static void test_sub_silent_on_silence() {
     check(peak == 0.0f, "no output for silent input (peak %.6f)", peak);
 }
 
+// ---------------------------------------------------------------- bypass tests
+// Drive the engine block by block the way the desktop app does, calling `hook(sampleIndex)` before each
+// block so a test can flip a switch at a block boundary. Records every input and output sample.
+template <class Gen, class Hook>
+static void run_recorded(DemonicEngine& e, Gen gen, Hook hook, double seconds,
+                         std::vector<float>& ins, std::vector<float>& outs) {
+    const size_t total = static_cast<size_t>(seconds * kFs);
+    std::vector<float> in(kBlock), out(kBlock);
+    ins.clear(); outs.clear();
+    for (size_t n = 0; n < total; n += kBlock) {
+        hook(n);
+        for (size_t k = 0; k < kBlock; ++k) in[k] = gen(n + k);
+        e.processBlock(in.data(), out.data(), kBlock);
+        for (size_t k = 0; k < kBlock; ++k) { ins.push_back(in[k]); outs.push_back(out[k]); }
+    }
+}
+
+// True for the one block (starting at sample n) that contains sample t. Blocks start at multiples of 64,
+// so comparing `n == t` would silently never fire for most t.
+static bool block_has(size_t n, size_t t) { return t >= n && t < n + kBlock; }
+
+static void extreme_settings(DemonicEngine& e) {      // everything on, everything loud
+    e.setPitchShift(-500); e.setSubOctaveBlend(1); e.setRobotBlend(0.9f); e.setRobotFreq(75);
+    e.setWavefold(5); e.setDrive(12); e.setDecimation(5); e.setDelayFeedback(1.05f); e.setDelayMix(0.6f);
+    e.setReverbMix(0.8f); e.setMix(1.0f);
+}
+
+static void test_bypass_is_exact() {
+    std::printf("\n-- Bypass: output is an exact copy of the input --\n");
+    DemonicEngine e(static_cast<float>(kFs));
+    extreme_settings(e);
+    Noise noise;
+    std::vector<float> ins, outs;
+    const size_t switchAt = 44100;            // effects on for the first second, bypass after
+    run_recorded(e, [&](size_t n) { return 0.4f * std::sin(2.0 * kPi * 180.0 * n / kFs) + 0.05f * noise.next(); },
+                 [&](size_t n) { if (block_has(n, switchAt)) e.setBypass(true); }, 2.5, ins, outs);
+    size_t mismatches = 0; double worst = 0;
+    for (size_t i = switchAt + 1024; i < ins.size(); ++i) {   // skip the 5 ms crossfade (and some slack)
+        if (outs[i] != ins[i]) { ++mismatches; worst = std::fmax(worst, std::fabs(outs[i] - ins[i])); }
+    }
+    check(mismatches == 0, "after the crossfade, all %zu samples are bit-for-bit identical to the input (mismatches: %zu)",
+          ins.size() - (switchAt + 1024), mismatches);
+    // And the effects really were doing something before the switch.
+    double diff = 0; for (size_t i = 22050; i < switchAt; ++i) diff = std::fmax(diff, std::fabs(outs[i] - ins[i]));
+    check(diff > 0.2, "sanity: with effects on, output differed from input by up to %.2f", diff);
+    check(e.isBypassed(), "isBypassed() reports true");
+}
+
+static void test_bypass_no_click() {
+    std::printf("\n-- Bypass: switching on and off does not click --\n");
+    DemonicEngine e(static_cast<float>(kFs));
+    isolate(e);
+    e.setDrive(6); e.setSubOctaveBlend(0.5f); e.setDelayMix(0.3f); e.setReverbMix(0.3f); e.setMix(0.85f);
+    std::vector<float> ins, outs;
+    const size_t onAt = 44100, offAt = 44100 * 2;
+    run_recorded(e, [&](size_t n) { return 0.5f * std::sin(2.0 * kPi * 220.0 * n / kFs); },
+                 [&](size_t n) { if (block_has(n, onAt)) e.setBypass(true); if (block_has(n, offAt)) e.setBypass(false); },
+                 3.0, ins, outs);
+    auto maxStep = [&](size_t from, size_t to) {
+        double m = 0; for (size_t i = from + 1; i < to; ++i) m = std::fmax(m, std::fabs(outs[i] - outs[i - 1])); return m; };
+    double baseline = maxStep(22050, onAt);                    // normal effect-chain steps (includes quantisation)
+    double engaging = maxStep(onAt, onAt + 2048);
+    double releasing = maxStep(offAt, offAt + 2048);
+    check(engaging <= 1.5 * baseline + 0.01, "engaging: largest step %.3f vs %.3f normally", engaging, baseline);
+    check(releasing <= 1.5 * baseline + 0.01, "releasing: largest step %.3f vs %.3f normally", releasing, baseline);
+}
+
+static void test_bypass_clears_tails() {
+    std::printf("\n-- Bypass: no stale echo comes back when switched off again --\n");
+    DemonicEngine e(static_cast<float>(kFs));
+    isolate(e);
+    e.setDelayMix(1.0f); e.setDelayFeedback(0.8f); e.setReverbMix(1.0f); e.setMix(1.0f);
+    std::vector<float> ins, outs;
+    const size_t onAt = static_cast<size_t>(0.6 * kFs), offAt = static_cast<size_t>(0.9 * kFs);
+    // 0.5 s of loud sound, then silence. Bypass on shortly after the sound stops, off 0.3 s later.
+    run_recorded(e, [&](size_t n) { return (n < 22050) ? 0.8f * std::sin(2.0 * kPi * 300.0 * n / kFs) : 0.0f; },
+                 [&](size_t n) { if (block_has(n, onAt)) e.setBypass(true); if (block_has(n, offAt)) e.setBypass(false); },
+                 3.0, ins, outs);
+    double tail = 0; for (size_t i = offAt + 2048; i < outs.size(); ++i) tail = std::fmax(tail, std::fabs(outs[i]));
+    check(tail < 1e-6, "silence after un-bypassing (largest sample %.8f)", tail);
+
+    // Control experiment: without bypass, the same tail is clearly audible at that point.
+    DemonicEngine c(static_cast<float>(kFs));
+    isolate(c);
+    c.setDelayMix(1.0f); c.setDelayFeedback(0.8f); c.setReverbMix(1.0f); c.setMix(1.0f);
+    run_recorded(c, [&](size_t n) { return (n < 22050) ? 0.8f * std::sin(2.0 * kPi * 300.0 * n / kFs) : 0.0f; },
+                 [](size_t) {}, 3.0, ins, outs);
+    double control = 0; for (size_t i = offAt + 2048; i < outs.size() && i < offAt + 2048 + 22050; ++i) control = std::fmax(control, std::fabs(outs[i]));
+    check(control > 0.01, "control: without bypass the echoes are still audible (largest sample %.3f)", control);
+}
+
+static void test_bypass_then_effects_return() {
+    std::printf("\n-- Bypass: effects come back to normal afterwards --\n");
+    DemonicEngine e(static_cast<float>(kFs));
+    isolate(e); e.setDrive(12); e.setMix(1.0f);
+    std::vector<float> ins, outs;
+    run_recorded(e, [&](size_t n) { return 0.3f * std::sin(2.0 * kPi * 220.0 * n / kFs); },
+                 [&](size_t n) { if (block_has(n, 22050)) e.setBypass(true); if (block_has(n, 44100)) e.setBypass(false); },
+                 2.0, ins, outs);
+    double diff = 0; bool finite = true;
+    for (size_t i = 66150; i < outs.size(); ++i) { diff = std::fmax(diff, std::fabs(outs[i] - ins[i])); finite = finite && std::isfinite(outs[i]); }
+    check(finite && diff > 0.05, "after bypass is released the effect is audible again (output differs by up to %.2f)", diff);
+}
+
+static void test_bypass_clears_runaway_feedback() {
+    std::printf("\n-- Bypass: doubles as a panic button for runaway echo --\n");
+    DemonicEngine e(static_cast<float>(kFs));
+    isolate(e); e.setDelayFeedback(1.05f); e.setDelayMix(0.3f); e.setMix(1.0f);
+    std::vector<float> ins, outs;
+    const size_t onAt = 44100 * 25;
+    run_recorded(e, [&](size_t n) { return (n < 9000) ? 0.3f * std::sin(2.0 * kPi * 200.0 * n / kFs) : 0.0f; },
+                 [&](size_t n) { if (block_has(n, onAt)) e.setBypass(true); if (block_has(n, onAt + 44100)) e.setBypass(false); },
+                 28.0, ins, outs);
+    double before = 0; for (size_t i = onAt - 22050; i < onAt; ++i) before = std::fmax(before, std::fabs(outs[i]));
+    double after = 0; bool finite = true;
+    for (size_t i = onAt + 44100 + 2048; i < outs.size(); ++i) { after = std::fmax(after, std::fabs(outs[i])); finite = finite && std::isfinite(outs[i]); }
+    check(before > 5.0, "sanity: feedback 1.05 had run away (peak %.1f, many times full scale)", before);
+    check(finite && after < 1e-6, "after a bypass cycle the runaway is gone (peak %.8f)", after);
+}
+
 int main() {
     test_pitch_shift();
     test_pitch_shift_voice_like();
@@ -209,6 +329,11 @@ int main() {
     test_sub_octave();
     test_sub_octave_voice_like();
     test_sub_silent_on_silence();
+    test_bypass_is_exact();
+    test_bypass_no_click();
+    test_bypass_clears_tails();
+    test_bypass_then_effects_return();
+    test_bypass_clears_runaway_feedback();
     std::printf("\n%s (%d failure%s)\n", g_failures ? "SOME TESTS FAILED" : "ALL TESTS PASSED", g_failures,
                 g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

@@ -2,7 +2,7 @@
 
 The Vocal FX Processor turns your microphone into a real-time "demonic" vocal effects pedal. You talk or sing into a mic, and what comes out of your headphones is a growling, robotic, glitchy, echoing version of your voice.
 
-The desktop app has three parts: a small simulated OLED screen (modelled on the display of a hardware pedal), two buttons, and eleven sliders. Everything runs live with very little delay.
+The desktop app has three parts: a small simulated OLED screen (modelled on the display of a hardware pedal), three buttons (preset, freeze, and a big **Bypass** button that switches all effects off in one click), and eleven sliders. Everything runs live with very little delay.
 
 > **Status note.** This guide describes the code as it exists in the repository today. A few things behave differently from what the on-screen labels suggest (most importantly, **presets currently change the displayed name only**). They are collected in [Known limitations](#known-limitations) so you are not surprised.
 
@@ -19,9 +19,10 @@ The desktop app has three parts: a small simulated OLED screen (modelled on the 
 7. [Parameter reference](#parameter-reference)
 8. [Presets](#presets)
 9. [Spectral Freeze](#spectral-freeze)
-10. [Sound recipes](#sound-recipes)
-11. [Troubleshooting](#troubleshooting)
-12. [Known limitations](#known-limitations)
+10. [Bypass: effects off in one press](#bypass-effects-off-in-one-press)
+11. [Sound recipes](#sound-recipes)
+12. [Troubleshooting](#troubleshooting)
+13. [Known limitations](#known-limitations)
 
 ---
 
@@ -78,6 +79,7 @@ The build looks for PortAudio in the standard places on both Intel and Apple Sil
 ## Safety first: volume and headphones
 
 - **Use headphones.** The app plays your processed voice straight back out. With speakers, the mic picks the sound up again and you get an ear-piercing howl (acoustic feedback).
+- **Know your panic button.** Press **`B`** or **Space** (or click the big green button) to bypass all effects instantly. It also flushes any runaway echo. See [Bypass](#bypass-effects-off-in-one-press).
 - **Start with the system volume low.** There is no master volume control and no output limiter. Some settings can produce output well above full scale — high **Wavefolder** values and **Delay Feedback above 1.0** in particular — which clips harshly and can be very loud.
 - **Wired headphones give the lowest delay.** Bluetooth adds noticeable lag on top of the app's own tiny delay.
 
@@ -88,13 +90,14 @@ The build looks for PortAudio in the standard places on both Intel and Apple Sil
 ```
 ┌──────────────────────────────────────────┐
 │  RP2040 MASTER PROCESSOR + SUSTAIN       │
-│  Press 'P' to cycle preset | 'F' = Freeze│
+│ 'P' preset | 'F' Freeze | 'B'/Space Bypass│
 │        ┌────────────────────────┐        │
 │        │ PTCH:DEMONIC GROWL     │  ← "OLED" display
 │        │  ~~~~ waveform ~~~~    │
 │        │ ████████ (input level) │
 │        └────────────────────────┘        │
 │  [ PRESET: DEMONIC GROWL ] [ FREEZE: OFF ]│
+│  [ EFFECTS ON - click or B/Space = BYPASS ]│   ← big green/red bypass button
 │  Pitch +0.0 st   ░░░░░░▓░░░░░░           │
 │  Drive (Gain)    ▓▓▓▓▓▓▓▓▓░░░░           │
 │  Sub-Octave      ▓▓▓▓▓▓▓░░░░░░           │
@@ -106,10 +109,11 @@ The build looks for PortAudio in the standard places on both Intel and Apple Sil
 
 - **Top-left text** — `PTCH:` followed by the current preset name. ("PTCH" is just a label; this display does not show pitch.)
 - **`[FREEZE ON]`** — appears in red when Spectral Freeze is active.
+- **`[BYPASS]`** — appears in red when Bypass is on. The waveform turns grey.
 - **Waveform** — a very short snapshot (about 3 milliseconds) of the sound *coming out* of the processor. It scrolls quickly and mostly serves as a "yes, it's alive" indicator. It turns red during Freeze.
 - **Bar along the bottom** — your **microphone input level**. If this bar never moves when you talk, the app is not hearing your mic (see [Troubleshooting](#troubleshooting)).
 
-**The two buttons** sit below the display: the preset button on the left and the Spectral Freeze button on the right.
+**The buttons** sit below the display: the preset button on the left and the Spectral Freeze button on the right, with one wide **Bypass button** beneath them. The Bypass button is **green** with the text "EFFECTS ON" while your effects are working, and turns **red** with "BYPASSED" when they are switched off.
 
 **The eleven sliders** fill the rest of the window. A fuller blue bar means a higher value. Most sliders do not show numbers, so you set them by eye and by ear; the **Pitch** slider's label shows its current value in semitones.
 
@@ -120,7 +124,8 @@ The build looks for PortAudio in the standard places on both Intel and Apple Sil
 | Action | How |
 |---|---|
 | Cycle to the next preset | Press **`P`**, or click the preset button |
-| Toggle Spectral Freeze | Press **`F`**, or click the freeze button |
+| Toggle Spectral Freeze | Press **`F`**, or click the freeze button (does nothing while bypassed) |
+| **Bypass: effects off / on** | Press **`B`** or **`Space`**, or click the wide Bypass button |
 | Change a slider | Click or drag with the mouse **inside the slider's bar** |
 | Quit | `Esc` or close the window |
 
@@ -210,6 +215,28 @@ Press **`F`** (or click the freeze button) to toggle Freeze. While it is on, the
 
 ---
 
+## Bypass: effects off in one press
+
+Press **`B`** or **`Space`** (or click the wide button under the display) to switch every effect off. Press again to switch them back on. It is the quickest way to hear your plain voice, compare it with the processed sound, or stop something that has gone wrong.
+
+**What happens when you bypass**
+
+- You hear your **untouched voice**: no pitch shift, no gate, no drive, no echo, nothing. The output is an exact copy of the input.
+- The switch takes about **5 thousandths of a second**, so it does not click, even in the middle of a word.
+- The **display** shows `[BYPASS]` in red and the waveform turns grey. The input level bar keeps working, so you can still see your microphone is alive.
+- **Your slider settings are kept.** You can even move sliders while bypassed. They take effect the moment you switch effects back on.
+
+**What it clears**
+
+- **Echo and reverb tails are wiped**, so nothing from before the bypass comes back when you switch effects on again. You will not hear a ghost of what you said earlier.
+- **Spectral Freeze is switched off**, and the `F` key and freeze button do nothing while bypassed. Freeze the sound again after you switch effects back on.
+
+**Bypass as a panic button.** If the echo has built up out of control (Delay Feedback above 1.0 makes it grow louder and louder), press **`B`** twice: once to bypass, once to come back. The runaway echo is gone. Also pull Delay Feedback back below 1.0, or it will start to build again.
+
+**What bypass is not.** It is *software* bypass. Your voice still travels through the computer (a small, fixed delay of a couple of milliseconds plus your audio device's own delay). If you want a completely delay-free clean voice, use your audio interface's own **Direct Monitor** switch instead. Just be careful not to leave Direct Monitor on while you are listening to the effects (you would hear both).
+
+---
+
 ## Sound recipes
 
 These are starting points. Remember there are no numeric readouts, so aim by eye. Lower your volume before trying the more extreme ones.
@@ -248,6 +275,9 @@ The noise gate ignores anything below about −34 dB full-scale. Speak closer to
 **The pitch-shifted voice sounds fluttery or ticks.**
 The shifter works by sliding a playback point and jumping back several times a second (about 6 times a second at −5 semitones, up to 25 at a full octave). Smaller shifts are smoother, steady sung notes work better than fast speech, and lowering Wet/Dry blends in your natural voice to mask it.
 
+**I only hear my normal voice, and the effects have stopped.**
+Bypass is on. The wide button under the display will be red and say "BYPASSED", and the display shows `[BYPASS]`. Press `B` or `Space` (or click the button) to turn effects back on.
+
 **Loud howling or squealing.**
 Acoustic feedback. Use headphones, or move the mic far from the speakers and lower the volume.
 
@@ -255,7 +285,7 @@ Acoustic feedback. Use headphones, or move the mic far from the speakers and low
 Reduce **Wavefolder** (to 2 or below), reduce **Drive**, set **Delay Feedback** below 1.0, and lower the system volume.
 
 **An echo that keeps growing or won't stop.**
-Delay Feedback is at or above 1.0. Drag it down below 1.0 (e.g., 0.6).
+Delay Feedback is at or above 1.0. Press `B` twice (bypass, then back) to flush the echo at once, then drag Delay Feedback down below 1.0 (e.g., 0.6).
 
 **Sound is delayed or "laggy".**
 The app's own buffering is tiny (about 1.5 ms each way). Most lag comes from the audio device — switch from Bluetooth to wired headphones, and avoid sharing the audio device with other apps.
@@ -280,6 +310,7 @@ These are things you may notice and why:
 - **The `PTCH:` label on the display is only the preset name.** It does not show the pitch setting; the Pitch slider's own label does.
 - **Sub-Octave needs a steady voice.** It follows your pitch, so it works best on one clear sung or spoken note. Whispers, breathy sounds, heavy noise, or several voices at once can make it flutter or drop out. It is silent when you are silent.
 - **No output level protection.** High Wavefolder values and Delay Feedback above 1.0 can push the output beyond full scale, causing clipping.
+- **Bypass is software bypass.** It is exact and click-free, but your voice still passes through the computer. For zero-delay monitoring use your audio interface's Direct Monitor.
 - **Mono, 44.1 kHz only**, using the default audio devices.
 - **Fixed echo and reverb timings.** Only their amounts can be adjusted.
 - **No numeric slider readouts and no saving of settings.** Settings reset every time you restart.

@@ -73,7 +73,7 @@ The product itself is two files: the **engine** (`demonic_engine.hpp`/`.cpp`, ab
 
 **The real-time deadline.** The sound card wants a new block every 1.45 ms, forever. If your code is late, the audio glitches. So the code that runs per block (the *audio callback*) follows strict rules: no printing, no file access, no memory allocation, no waiting on locks. Think of it like a game's frame deadline, but 700 times per second.
 
-**Decibels.** Loudness in dB is logarithmic. To convert gain in dB to a multiplier: `multiplier = 10 ** (dB / 20)`. So +12 dB ≈ ×4, and +6 dB ≈ ×2. (`processBlock` line 109.)
+**Decibels.** Loudness in dB is logarithmic. To convert gain in dB to a multiplier: `multiplier = 10 ** (dB / 20)`. So +12 dB ≈ ×4, and +6 dB ≈ ×2. (`processBlock` line 141.)
 
 **Common effect building blocks used in this project** (each is explained in section 6):
 
@@ -273,12 +273,12 @@ They communicate **only** through a set of global `std::atomic` variables (the "
 
 ### 4.2 What happens in one audio block
 
-Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:34`), which:
+Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:35`), which:
 
-1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 42–47).
-2. Copies every slider value from the atomics into the engine via setters (lines 49–60).
-3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 62–67).
-4. Copies the output into the oscilloscope ring buffer (lines 69–74) and publishes the mic peak (line 79).
+1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 43–48).
+2. Copies every slider value from the atomics into the engine via setters (lines 50–62). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
+3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 64–69).
+4. Copies the output into the oscilloscope ring buffer (lines 71–76) and publishes the mic peak (line 81).
 5. Returns `paContinue` ("keep going").
 
 ### 4.3 Design decisions worth knowing
@@ -287,20 +287,21 @@ Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:34`), which:
 - **Everything is allocated up front.** No `new`, no `malloc`, no `std::vector` growth in the audio path — required for real-time safety and for microcontrollers.
 - **Control values are copied in once per block**, not per sample. Cheap, but it means parameter changes are "steppy" (see section 10.10).
 - **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE);`, `main_desktop.cpp:13`). Both threads can see it, but by convention only the audio thread should touch its state (the UI thread breaks this convention in two small places — section 10.7).
-- **Memory footprint:** `sizeof(DemonicEngine)` is about **182 KB** (186,808 bytes measured), almost all of it the five buffers.
+- **Memory footprint:** `sizeof(DemonicEngine)` is about **182 KB** (186,824 bytes measured), almost all of it the five buffers.
 
 ---
 
 ## 5. Walkthrough: the desktop app (`desktop/main_desktop.cpp`)
 
-### 5.1 Globals (lines 10–32)
+### 5.1 Globals (lines 10–33)
 
 ```cpp
 #define SAMPLE_RATE 44100
 #define FRAMES_PER_BUFFER 64
 DemonicEngine demonic(SAMPLE_RATE);
 
-std::atomic<float> guiPitch(0.0f);       // pitch shift in cents; 0 = bypass
+std::atomic<bool>  guiBypass(false);     // true bypass: effects off, dry signal only
+std::atomic<float> guiPitch(0.0f);       // pitch shift in cents; 0 = shifter off
 std::atomic<float> guiDrive(11.0f);
 ...
 std::atomic<int>   guiActivePreset(0);
@@ -314,7 +315,7 @@ std::atomic<size_t> scopeHead(0);
 
 One atomic per control, initialised to the slider's default. The **scope buffer** is a 128-sample circular buffer the audio thread fills with output samples; the UI reads it to draw the waveform. `scopeHead` is how many samples have been written so far (it grows without bound; reads wrap it with `% SCOPE_SIZE`).
 
-### 5.2 The audio callback (lines 34–81)
+### 5.2 The audio callback (lines 35–83)
 
 The signature is dictated by PortAudio; you cannot change it. The parts you care about are `inputBuffer`, `outputBuffer`, and `framesPerBuffer`. The first thing it does is cast the generic `void*` buffers to `float*` (since the stream was opened with `paFloat32`):
 
@@ -325,7 +326,7 @@ float* out = static_cast<float*>(outputBuffer);
 
 The preset check uses a `static` local, `lastPreset`, which persists across calls so the callback can detect a *change*. Then every parameter is pushed into the engine, then the block is processed.
 
-### 5.3 `main()` setup (lines 83–104)
+### 5.3 `main()` setup (lines 85–106)
 
 1. `Pa_Initialize()` starts PortAudio.
 2. `Pa_OpenDefaultStream(&stream, 1, 1, paFloat32, SAMPLE_RATE, FRAMES_PER_BUFFER, audioCallback, nullptr)` — opens the default devices with **1 input channel, 1 output channel (mono), 32-bit float samples, 44.1 kHz, 64-frame blocks**, and registers `audioCallback`. (`&stream` passes the address of `stream` so the function can fill it in — an "output parameter".)
@@ -335,18 +336,18 @@ The preset check uses a `static` local, `lastPreset`, which persists across call
 
 Error handling is by return code, not exceptions: functions return `paNoError` on success and `main` prints and exits otherwise.
 
-### 5.4 The UI loop (lines 106–219)
+### 5.4 The UI loop (lines 108–245)
 
 Each frame:
 
-1. **Keys:** `P` cycles `guiActivePreset`; `F` toggles `guiSpectralFreeze`.
+1. **Keys:** `P` cycles `guiActivePreset`; `F` toggles `guiSpectralFreeze` (ignored while bypassed); `B` or `Space` toggles `guiBypass` (and clears `guiSpectralFreeze` when switching bypass on).
 2. **Snapshot:** reads every atomic into a local variable so the whole frame is drawn from one consistent set of values.
-3. **Draw the OLED** (lines 130–155) into the 128×64 off-screen texture: border, preset name, optional `[FREEZE ON]`, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to stay inside the display), and the mic-level bar.
-4. **Draw the window** (lines 157–218): scales the OLED texture up 2× and blits it (`DrawTexturePro`); draws the two buttons with hit-testing by `CheckCollisionPointRec`; draws eleven sliders with the `drawSlider` lambda.
+3. **Draw the OLED** (lines 142–169) into the 128×64 off-screen texture: border, preset name, optional `[FREEZE ON]`, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to stay inside the display), and the mic-level bar.
+4. **Draw the window** (lines 171–244): scales the OLED texture up 2× and blits it (`DrawTexturePro`); draws the three buttons with hit-testing by `CheckCollisionPointRec`; draws the bypass button and eleven sliders with the `drawSlider` lambda.
 
-This style is called **immediate-mode UI**: there are no button or slider objects. Every frame the code asks "is the mouse over this rectangle and pressed?", acts on the answer, and draws it. The `drawSlider` lambda (line 192) both draws the bar and — if the mouse is held down inside it — computes the new value from the mouse x-position and `.store()`s it to the atomic.
+This style is called **immediate-mode UI**: there are no button or slider objects. Every frame the code asks "is the mouse over this rectangle and pressed?", acts on the answer, and draws it. The `drawSlider` lambda (line 218) both draws the bar and — if the mouse is held down inside it — computes the new value from the mouse x-position and `.store()`s it to the atomic.
 
-### 5.5 Shutdown (lines 221–226)
+### 5.5 Shutdown (lines 247–253)
 
 Unload the texture, close the window, stop and close the audio stream, terminate PortAudio.
 
@@ -365,13 +366,14 @@ Unload the texture, close the window, stop and close the audio stream, terminate
 | `DemonicEngine(float sampleRate)` | Create the engine; zero buffers; define presets |
 | `processBlock(in, out, n)` | The workhorse: process `n` samples |
 | `setDrive`, `setSubOctaveBlend`, `setRobotBlend`, `setRobotFreq`, `setWavefold`, `setDecimation`, `setDelayFeedback`, `setDelayMix`, `setReverbMix`, `setMix` | Plain setters: store a value in a member |
-| `setSpectralFreeze(bool)` / `isSpectralFrozen()` | Freeze control |
+| `setSpectralFreeze(bool)` / `isSpectralFrozen()` | Freeze control (refused while bypassed) |
+| `setBypass(bool)` / `isBypassed()` | True bypass: exact pass-through with all effect memory cleared. Section 6.9 |
 | `setPitchShift(float cents)` | Pitch shift, −1200…+1200 cents (100 cents = 1 semitone); 0 bypasses the shifter. `setFormantShift` is kept as a deprecated alias that forwards to it |
 | `loadPreset(int)`, `getCurrentPresetName()`, `getPresetCount()` | Preset handling |
 
 **Private state** falls into three groups:
 
-- **Parameters** (`driveDb`, `subBlend`, `robotBlend`, …) — set from outside.
+- **Parameters** (`driveDb`, `subBlend`, `robotBlend`, …) — set from outside. These survive a bypass untouched.
 - **Per-stage memory** (`subDetLP1`, `subDetLP2`, `subDetEnv`, `subArmed`, `subToggle`, `subFilterState`, `lowpassState`, `ringModPhase`, `heldSample`, `decimationCounter`, `dcInPrev`, `dcOutPrev`, `inputEnvelope`, `pitchPhase`, `pitchBlend`) — what each effect must remember from one sample to the next.
 - **Buffers** — five fixed arrays:
 
@@ -406,13 +408,13 @@ def step(x):
 
 When the head advances, it overwrites the oldest sample. A slot at offset *k* **ahead** of the head was last written `22050 − k` samples ago — which means the **delay time is `size − offset`**, not `offset`. This subtlety matters in section 10.5.
 
-### 6.4 The constructor and presets (`demonic_engine.cpp:33–56`)
+### 6.4 The constructor and presets (`demonic_engine.cpp:33–57`)
 
 Sets all members, zero-fills the five buffers with `std::fill`, defines three presets using brace-initialisation (`presets[0] = {"DEMONIC GROWL", 11.0f, ...};` — values in the same order as the struct fields), and calls `loadPreset(0)`.
 
-`loadPreset(i)` (lines 86–98) copies the ten fields from `presets[i % 3]` into the live parameter members. The `% NUM_PRESETS` makes cycling wrap around.
+`loadPreset(i)` (lines 108–120) copies the ten fields from `presets[i % 3]` into the live parameter members. The `% NUM_PRESETS` makes cycling wrap around.
 
-### 6.5 `processBlock` stage by stage (`demonic_engine.cpp:108–266`)
+### 6.5 `processBlock` stage by stage (`demonic_engine.cpp:130–304`)
 
 Before the loop, two values are computed once per block:
 
@@ -425,19 +427,19 @@ Then a `for` loop handles each sample `input[i]` through the gate, the pitch shi
 
 | # | Lines | Stage | What the code does |
 |---|---|---|---|
-| gate | 119–120 | **Noise gate** | `activeSignal = abs(dry) > 0.02 ? dry : 0`. Anything quieter than 0.02 (−34 dBFS) is zeroed. Also updates `inputEnvelope`, a smoothed loudness meter (a one-pole filter on `abs(activeSignal)`). |
-| 0b | 122–144 | **Pitch shifter** | One read tap sweeps back through `pitchBuffer`, reading the audio faster or slower than it was written (that is what changes the pitch). A second tap covers for it while the first jumps back at the end of each sweep. Faded in and out over about 10 ms so switching it on or off does not click. Details in section 6.7. |
-| 1 | 146–161 | **Chorus doubler** | Writes the gated signal into `delayLine`. A 0.5 Hz sine LFO modulates a read position around 441 samples (10 ms) ± 66 samples. It reads between two neighbouring samples with **linear interpolation** (`a*(1-frac) + b*frac`) because the position is fractional. Adds 30% of that copy to the voice. |
-| 2 | 163–190 | **Sub-octave** | A Schmitt-trigger octave divider: watches a low-passed copy of the voice, flips a square wave on each rising edge (once per cycle, so the square runs at half the frequency), smooths it (one-pole at about 290 Hz) and scales it by the voice's loudness (`inputEnvelope`) and `subBlend`. Details in section 6.8. |
-| 3 | 194–202 | **Ring modulation** | An oscillator at `robotFreq + 40 × inputEnvelope` Hz (`ringModPhase` is the oscillator's angle in radians, wrapped at 2π). `wet` is crossfaded between the clean signal and `wet × sin(phase) × 1.5` by `robotBlend`. |
-| 4 | 204–211 | **Drive and wavefold** | `wet = tanh(wet × gainMultiplier)` is the saturation. If `wavefoldDrive > 0.1`, a triangle fold is applied and mixed in at weight `0.4 × wavefoldDrive`. |
-| 5 | 213–221 | **Decimation** | A counter selects every Nth sample to "hold" (`heldSample`); in-between samples repeat it. Then `round(wet × 32) / 32` quantises to about 6 bits. |
-| 6 | 223–225 | **Tone filter** | One-pole low-pass, `a = 0.35` → roughly 3 kHz cutoff at 44.1 kHz. |
-| 7 | 227–234 | **Spectral freeze** | If active, reads `freezeBuffer` in a loop and mixes it 70/30 with live signal. |
-| 8 | 236–244 | **Feedback delay** | Reads from `feedbackDelayBuffer`, writes `wet + delayed × delayFeedback` back in, and crossfades the output by `delayMix`. |
-| 9 | 246–256 | **"Catacomb" reverb** | Two tap reads from `reverbBuffer` (weights 0.6 and 0.4), written back with 0.55 feedback; crossfaded by `reverbMix`. |
-| 10 | 258–262 | **DC blocker** | `y = x − x_prev + 0.995 × y_prev`. A classic high-pass at a few Hz. |
-| mix | 264 | **Wet/dry** | `output[i] = dry × (1 − mix) + wet × mix`. Note `dry` is the *ungated* input. |
+| gate | 151–152 | **Noise gate** | `activeSignal = abs(dry) > 0.02 ? dry : 0`. Anything quieter than 0.02 (−34 dBFS) is zeroed. Also updates `inputEnvelope`, a smoothed loudness meter (a one-pole filter on `abs(activeSignal)`). |
+| 0b | 154–176 | **Pitch shifter** | One read tap sweeps back through `pitchBuffer`, reading the audio faster or slower than it was written (that is what changes the pitch). A second tap covers for it while the first jumps back at the end of each sweep. Faded in and out over about 10 ms so switching it on or off does not click. Details in section 6.7. |
+| 1 | 178–193 | **Chorus doubler** | Writes the gated signal into `delayLine`. A 0.5 Hz sine LFO modulates a read position around 441 samples (10 ms) ± 66 samples. It reads between two neighbouring samples with **linear interpolation** (`a*(1-frac) + b*frac`) because the position is fractional. Adds 30% of that copy to the voice. |
+| 2 | 195–224 | **Sub-octave** | A Schmitt-trigger octave divider: watches a low-passed copy of the voice, flips a square wave on each rising edge (once per cycle, so the square runs at half the frequency), smooths it (one-pole at about 290 Hz) and scales it by the voice's loudness (`inputEnvelope`) and `subBlend`. Details in section 6.8. |
+| 3 | 226–234 | **Ring modulation** | An oscillator at `robotFreq + 40 × inputEnvelope` Hz (`ringModPhase` is the oscillator's angle in radians, wrapped at 2π). `wet` is crossfaded between the clean signal and `wet × sin(phase) × 1.5` by `robotBlend`. |
+| 4 | 236–243 | **Drive and wavefold** | `wet = tanh(wet × gainMultiplier)` is the saturation. If `wavefoldDrive > 0.1`, a triangle fold is applied and mixed in at weight `0.4 × wavefoldDrive`. |
+| 5 | 245–253 | **Decimation** | A counter selects every Nth sample to "hold" (`heldSample`); in-between samples repeat it. Then `round(wet × 32) / 32` quantises to about 6 bits. |
+| 6 | 255–257 | **Tone filter** | One-pole low-pass, `a = 0.35` → roughly 3 kHz cutoff at 44.1 kHz. |
+| 7 | 259–266 | **Spectral freeze** | If active, reads `freezeBuffer` in a loop and mixes it 70/30 with live signal. |
+| 8 | 268–276 | **Feedback delay** | Reads from `feedbackDelayBuffer`, writes `wet + delayed × delayFeedback` back in, and crossfades the output by `delayMix`. |
+| 9 | 278–288 | **"Catacomb" reverb** | Two tap reads from `reverbBuffer` (weights 0.6 and 0.4), written back with 0.55 feedback; crossfaded by `reverbMix`. |
+| 10 | 290–294 | **DC blocker** | `y = x − x_prev + 0.995 × y_prev`. A classic high-pass at a few Hz. |
+| mix | 296–302 | **Wet/dry mix, then bypass crossfade** | `processed = dry × (1 − mix) + wet × mix`. Note `dry` is the *ungated* input. Then `output = processed × (1 − bypassBlend) + dry × bypassBlend`, where `bypassBlend` ramps between 0 and 1 over 5 ms (section 6.9). |
 
 #### The one-pole filter, in Python
 
@@ -459,7 +461,7 @@ In C++ the state is a member variable and the assignment is `lowpassState = lowp
 
 ### 6.6 Spectral freeze details
 
-`setSpectralFreeze(true)` (lines 71–80) — only on the *off → on* transition — copies 4,096 samples out of `feedbackDelayBuffer` starting at the write head into `freezeBuffer` and resets the read position. Because the write head points at the **oldest** data, this captures audio from roughly 0.41–0.5 s ago, not the most recent audio. Playback then loops those 4,096 samples (a ~93 ms loop, ≈ 10.8 repetitions per second).
+`setSpectralFreeze(true)` (lines 92–106) — only on the *off → on* transition — copies 4,096 samples out of `feedbackDelayBuffer` starting at the write head into `freezeBuffer` and resets the read position. Because the write head points at the **oldest** data, this captures audio from roughly 0.41–0.5 s ago, not the most recent audio. Playback then loops those 4,096 samples (a ~93 ms loop, ≈ 10.8 repetitions per second).
 
 ### 6.7 The pitch shifter
 
@@ -515,6 +517,32 @@ The Schmitt-trigger pattern (an "armed" flag and a threshold on each side) means
 
 **Remaining limits.** Like all simple dividers it follows one dominant periodic component. Whispered, breathy, or very noisy sounds, and chords or several voices at once, can make it flutter or drop out. It is silent when the input is.
 
+### 6.9 True bypass
+
+`setBypass(true)` makes the engine hand your untouched voice straight back. Three details matter:
+
+1. **It is exact.** Once the 5 ms crossfade has finished, `processBlock` skips the whole effect chain and runs `output[i] = input[i]`, so the output is bit-for-bit the input however extreme the settings (the test checks this with every effect pushed to its limit). The check sits at the top of `processBlock`:
+
+   ```cpp
+   if (bypassTarget && bypassBlend >= 1.0f) {
+       if (!bypassStateCleared) { resetState(); bypassStateCleared = true; }
+       for (size_t i = 0; i < numFrames; ++i) output[i] = input[i];
+       return;                                  // no DSP at all: also saves CPU
+   }
+   ```
+
+2. **It does not click.** Switching mid-note would otherwise jump instantly between two different waveforms. Instead, `bypassBlend` slides linearly between 0 (effects) and 1 (dry) over 5 ms, and the final line of the sample loop blends the two. A linear ramp (not an exponential one) matters: it reaches exactly 1.0, so the exact pass-through above can take over cleanly.
+
+3. **It wipes the effects' memory once.** `resetState()` zeroes every buffer (echo, reverb, chorus, pitch, freeze) and every filter and detector variable, but not the *parameters*, so your slider settings are all still there when you switch back. Without this wipe, switching bypass off would replay up to half a second of audio from before the bypass. A useful side effect: **bypass is a panic button**. A runaway echo loop (Delay Feedback above 1.0, issue 10.2) is flushed by a single bypass cycle; the test confirms a loop that had reached 74× full scale is silent afterwards. It also clears any NaN or infinity stuck in the loop.
+
+   The wipe happens once per bypass period (`bypassStateCleared`), not every block, so it costs nothing while bypassed.
+
+**Freeze and bypass.** A frozen loop lives in a buffer that the wipe clears, so Freeze is switched off by `setBypass(true)`, and `setSpectralFreeze(true)` is ignored while bypassed. The desktop app mirrors this: its bypass handler also clears `guiSpectralFreeze`, and the `F` key and freeze button do nothing while bypassed. Without that mirroring, the callback would re-assert the old freeze flag every block and "freeze" an empty buffer the moment bypass ended.
+
+**Thread safety.** As with every other setter, `setBypass` is called from the audio callback after the UI thread stores the flag in `guiBypass`; nothing else touches `bypassTarget` or `bypassBlend`.
+
+**What it is not.** This is *software* bypass: the signal still goes through the computer's input and output path (about 1.5 ms of buffering plus the audio device's own latency). For a truly zero-latency clean voice, use the audio interface's own direct-monitor switch.
+
 ---
 
 ## 7. The build system (`CMakeLists.txt`)
@@ -567,7 +595,7 @@ The Raspberry Pi Pico build lives in a **separate** CMake project (`pico/CMakeLi
 
 ### 8.1 Add a new parameter (worked example: tone-filter brightness)
 
-Right now the tone filter's coefficient `0.35` is hard-coded (the `lowpassState = ...` line in stage 6, `demonic_engine.cpp:224`). Here is how to make it adjustable.
+Right now the tone filter's coefficient `0.35` is hard-coded (the `lowpassState = ...` line in stage 6, `demonic_engine.cpp:256`). Here is how to make it adjustable.
 
 **1. Header — add the state and setter** (`include/demonic_engine.hpp`):
 
@@ -599,7 +627,7 @@ demonic.setTone(guiTone.load());                           // in audioCallback, 
 drawSlider("Tone", toneVal, 0.05f, 0.9f, guiTone);         // in the UI loop, plus: float toneVal = guiTone.load();
 ```
 
-The window is 630 px tall (`screenHeight`, line 100) and each slider takes 34 px; the 11 existing sliders already reach y ≈ 594, so a twelfth needs a taller window.
+The window is 668 px tall (`screenHeight`, line 102) and each slider takes 34 px; the 11 existing sliders start at y = 258 and reach y ≈ 632, so a twelfth would just fit but leave no margin; make the window taller first.
 
 **4. (Optional) add it to presets** — add a `float tone;` field to `VocalPreset`, extend the three brace-initialiser lines (the values must stay in the declared order), and copy it in `loadPreset`. **Note** that presets currently have no effect on the sound until issue 10.1 is fixed.
 
@@ -668,8 +696,15 @@ Measures **frequencies in the output**:
 | Sub-octave, sines | For 110–440 Hz at amplitudes 0.1–0.9: energy at half the input frequency is at least 8× larger with the sub on than off (in practice thousands of times) |
 | Sub-octave, voice-like | The same on a noisy harmonic signal |
 | Sub-octave, silence | No output for silent input |
+| Bypass, exact | With every effect at an extreme, output after the crossfade is **bit-for-bit identical** to the input; a sanity check confirms the effects were really altering the sound beforehand |
+| Bypass, no click | The largest sample-to-sample step while engaging or releasing is no bigger than the chain's normal steps |
+| Bypass, tails | Loud sound, then bypass on and off: nothing comes back afterwards, while a control run without bypass still shows audible echoes |
+| Bypass, recovery | After bypass is released the effects are audible again and the output is finite |
+| Bypass, panic | A feedback loop that had run away (peak ~74× full scale) is silent after one bypass cycle |
 
 **How it measures frequency.** `magnitude_at(signal, f)` is a Goertzel filter (a single bin of a Fourier transform) with a Hann window: it answers "how much of frequency *f* is in this signal?". `dominant_freq` scans a range in 1 Hz steps and refines the peak by parabolic interpolation. These are written out in plain C++ in the test file so you can read them.
+
+**A trap when testing switches.** Blocks start at multiples of 64, so a test that flips a switch with `if (n == 44100)` will silently never fire (44,100 is not a multiple of 64) and the test will pass without testing anything. Use `block_has(n, t)`, which is true for the block that contains sample *t*. The bypass tests originally had exactly this bug, and it was caught only because one of them failed.
 
 **Writing your own.** Use the helpers: `isolate(engine)` turns every optional effect off so only the one under test is audible; `render(engine, generator, seconds, keepSeconds)` feeds a signal in 64-sample blocks (the desktop app's block size) and returns the last part of the output; then assert on `magnitude_at` or `dominant_freq`.
 
@@ -685,7 +720,7 @@ Findings are ordered roughly by impact. Items marked **[measured]** were confirm
 
 ### 10.1 Presets are immediately overwritten by the sliders — *high* **[measured]**
 
-`main_desktop.cpp:42–60`. When the preset changes, `loadPreset()` copies the preset into the engine — and then, a few lines later in the same callback, all ten `set…()` calls overwrite those values with the slider atomics. Net effect: **the preset only changes the name.** (The atomics' defaults also don't match preset 0 — e.g. `guiRobotFreq` is 55 but DEMONIC GROWL says 45, `guiWavefold` is 1.5 vs 1.0.)
+`main_desktop.cpp:43–62`. When the preset changes, `loadPreset()` copies the preset into the engine — and then, a few lines later in the same callback, all ten `set…()` calls overwrite those values with the slider atomics. Net effect: **the preset only changes the name.** (The atomics' defaults also don't match preset 0 — e.g. `guiRobotFreq` is 55 but DEMONIC GROWL says 45, `guiWavefold` is 1.5 vs 1.0.)
 
 *Suggested fix:* when a preset is chosen, write the preset's values *into the GUI atomics* (UI thread) so the sliders jump to them and the callback applies them as usual. Add an accessor to the engine:
 
@@ -709,7 +744,9 @@ Call `selectPreset` from the `P` key and the preset button, and once at startup 
 
 ### 10.2 Delay feedback above 1.0 grows without limit, and nothing limits the output — *high* **[measured]**
 
-`demonic_engine.cpp:241`. The slider allows feedback up to 1.05. With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
+`demonic_engine.cpp:273`. The slider allows feedback up to 1.05. With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
+
+*Mitigation already available:* pressing **Bypass** flushes the loop (section 6.9), so a runaway can be silenced with one keypress. It is a workaround, not a fix: the loop can still run away again.
 
 *Suggested fix:* bound the loop with a soft clipper where the signal is written back, and add a final safety clamp:
 
@@ -725,7 +762,7 @@ The engine stored a "formant shift" value that no code ever read, and the displa
 
 ### 10.4 The wavefolder escapes the ±1 range — *high* **[measured]**
 
-`demonic_engine.cpp:209`:
+`demonic_engine.cpp:241`:
 
 ```cpp
 folded = std::abs(std::fmod(folded + 1.0f, 4.0f) - 2.0f) - 1.0f;
@@ -751,9 +788,9 @@ Because of the circular-buffer rule in 6.3 (*delay = size − offset*), the offs
 
 | Item | Code | Comment/intent | Measured |
 |---|---|---|---|
-| Echo tap (line 237) | offset 13,230 in a 22,050 buffer | "~300 ms" | **200 ms** |
-| Reverb tap 1 (line 247) | offset 4,410 in 16,384 | 100 ms | **121.5 ms** |
-| Reverb tap 2 (line 248) | offset 11,025 in 16,384 | 250 ms | **271.5 ms** |
+| Echo tap (line 269) | offset 13,230 in a 22,050 buffer | "~300 ms" | **200 ms** |
+| Reverb tap 1 (line 279) | offset 4,410 in 16,384 | 100 ms | **121.5 ms** |
+| Reverb tap 2 (line 280) | offset 11,025 in 16,384 | 250 ms | **271.5 ms** |
 
 The "reverb" is two feedback echoes (at about 122 and 272 ms, with a third at 393 ms from the loop), not a diffuse reverb. For a real reverb, use several comb and all-pass filters of mutually-prime lengths (e.g. a Schroeder or Freeverb design).
 
@@ -765,7 +802,7 @@ The original toggled on both zero-crossing directions (same frequency as the inp
 
 ### 10.7 Cross-thread data not protected — *low* **[by inspection]**
 
-- `main_desktop.cpp:134,178` call `demonic.getCurrentPresetName()` from the UI thread while the audio thread may be changing `currentPresetIndex` (a plain `int`).
+- `main_desktop.cpp:146,192` call `demonic.getCurrentPresetName()` from the UI thread while the audio thread may be changing `currentPresetIndex` (a plain `int`).
 - `scopeBuffer` (a plain `float` array) is written by the audio thread and read by the UI thread with no synchronisation.
 
 In practice both "work" on common hardware (a stale preset name or a slightly torn waveform), but formally they are data races. *Fix:* make `currentPresetIndex` an `std::atomic<int>`, or have the UI look up the name from `guiActivePreset` through a static name table; accept or lock-free-queue the scope data.
@@ -819,7 +856,7 @@ It repeats a table of results every few seconds covering: a baseline with option
 - **No hardware floating point.** The M0+ has no FPU; every `float` operation runs in software. The engine does `sinf` twice per sample (chorus LFO, ring modulator), `tanhf` once, plus `floorf`, `fmodf`, `roundf` and, while the pitch shifter is crossfading, `cosf`. These are the first suspects.
 - **Already done:** `M_PI` is a 64-bit `double`, so expressions such as `2.0f * M_PI * …` silently forced slow double-precision maths. The engine now uses a `float` constant (`kTwoPi`) instead.
 - **Candidate optimisations**, in rough order of expected payoff (measure after each change): replace the two per-sample `sin` calls with lookup tables or a recurrence oscillator; replace `tanh` with a cheap polynomial or lookup table; use a lookup table for the pitch crossfade `cos`; drop to a 22.05 kHz sample rate (halves the per-second work); use the second core for part of the chain; move hot paths to fixed-point integer arithmetic. The Pico SDK also ships optimised software float routines, which the benchmark already benefits from.
-- **Memory.** `sizeof(DemonicEngine)` is **186,808 bytes (about 182 KB, 69 % of the 264 KB RAM)**, before the SDK's own needs, stacks, and audio I/O buffers. It must be a global or static object (`main_pico.cpp` does this), never a local variable. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
+- **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB, 69 % of the 264 KB RAM)**, before the SDK's own needs, stacks, and audio I/O buffers. It must be a global or static object (`main_pico.cpp` does this), never a local variable. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
 - **I/O still to design.** An ADC or I²S codec for audio in and out, an SSD1306-style 128×64 OLED (the desktop mock is already that size), and buttons or pots mapped to the same controls the GUI atomics represent.
 - **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine`, read controls from pots and buttons, and call `processBlock` from a DMA or I²S interrupt, the same shape as the desktop app.
 

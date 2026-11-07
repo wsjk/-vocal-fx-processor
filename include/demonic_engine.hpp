@@ -40,6 +40,13 @@ public:
     void setSpectralFreeze(bool freeze);   // Infinite Sustain Toggle
     bool isSpectralFrozen() const;
 
+    // True bypass. After a ~5 ms crossfade (so switching does not click) the output is an exact copy
+    // of the input and the whole effect chain stops running. Everything the effects remember (echo and
+    // reverb tails, the freeze loop, filter memory) is cleared, and Freeze is switched off, so turning
+    // bypass off again starts from a clean slate instead of replaying stale audio.
+    void setBypass(bool bypass);
+    bool isBypassed() const;
+
     void loadPreset(int index);
     const char* getCurrentPresetName() const;
     int getPresetCount() const;
@@ -101,4 +108,11 @@ private:
     // Reverb buffer
     float reverbBuffer[16384];
     size_t reverbWriteHead;
+
+    // True bypass
+    bool bypassTarget;          // what the caller asked for
+    float bypassBlend;          // 0 = effects only ... 1 = dry only (ramps over ~5 ms)
+    bool bypassStateCleared;    // effect memory has been wiped for this bypass period
+
+    void resetState();          // wipe all effect memory (not the parameters)
 };

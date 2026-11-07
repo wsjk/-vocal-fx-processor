@@ -12,6 +12,7 @@
 
 DemonicEngine demonic(SAMPLE_RATE);
 
+std::atomic<bool>  guiBypass(false);        // true bypass: dry signal only, effects off
 std::atomic<float> guiPitch(0.0f);          // pitch shift in cents (0 = bypass)
 std::atomic<float> guiDrive(11.0f);
 std::atomic<float> guiSubBlend(0.85f);
@@ -46,6 +47,7 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
         lastPreset = currentPreset;
     }
 
+    demonic.setBypass(guiBypass.load());          // before the freeze setter below: freeze is refused while bypassed
     demonic.setPitchShift(guiPitch.load());
     demonic.setDrive(guiDrive.load());
     demonic.setSubOctaveBlend(guiSubBlend.load());
@@ -97,7 +99,7 @@ int main() {
     Pa_StartStream(stream);
 
     const int screenWidth = 480;
-    const int screenHeight = 630;
+    const int screenHeight = 668;
     InitWindow(screenWidth, screenHeight, "Demonic Pedal - Freeze & Infinite Repeat");
     SetTargetFPS(60);
 
@@ -108,7 +110,16 @@ int main() {
             int nextPreset = (guiActivePreset.load() + 1) % demonic.getPresetCount();
             guiActivePreset.store(nextPreset);
         }
-        if (IsKeyPressed(KEY_F)) {
+        // Bypass ('B' or Space): effects off, your untouched voice straight through.
+        // Freeze cannot survive a bypass, so it is switched off at the same time.
+        auto setBypassUi = [&](bool on) {
+            guiBypass.store(on);
+            if (on) guiSpectralFreeze.store(false);
+        };
+        if (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_SPACE)) {
+            setBypassUi(!guiBypass.load());
+        }
+        if (IsKeyPressed(KEY_F) && !guiBypass.load()) {
             bool currentFreeze = guiSpectralFreeze.load();
             guiSpectralFreeze.store(!currentFreeze);
         }
@@ -126,13 +137,16 @@ int main() {
         float mixVal = guiMix.load();
         int presetIdx = guiActivePreset.load();
         bool freezeActive = guiSpectralFreeze.load();
+        bool bypassActive = guiBypass.load();
 
         BeginTextureMode(oledCanvas);
         ClearBackground(BLACK);
         
         DrawRectangleLines(0, 0, 128, 64, BLUE);
         DrawText(TextFormat("PTCH:%s", demonic.getCurrentPresetName()), 2, 2, 7, SKYBLUE);
-        if (freezeActive) {
+        if (bypassActive) {
+            DrawText(" [BYPASS]", 80, 2, 7, RED);
+        } else if (freezeActive) {
             DrawText(" [FREEZE ON]", 75, 2, 7, RED);
         }
 
@@ -147,7 +161,7 @@ int main() {
             y1 = std::clamp(y1, 12.0f, 58.0f);
             y2 = std::clamp(y2, 12.0f, 58.0f);
 
-            DrawLine(x, static_cast<int>(y1), x + 1, static_cast<int>(y2), freezeActive ? RED : SKYBLUE);
+            DrawLine(x, static_cast<int>(y1), x + 1, static_cast<int>(y2), bypassActive ? GRAY : (freezeActive ? RED : SKYBLUE));
         }
 
         float peak = currentMicPeak.load();
@@ -158,7 +172,7 @@ int main() {
         ClearBackground(GetColor(0x181818FF));
 
         DrawText("RP2040 MASTER PROCESSOR + SUSTAIN", 24, 10, 15, LIGHTGRAY);
-        DrawText("Press 'P' to cycle preset | Press 'F' to toggle Freeze", 24, 28, 10, GRAY);
+        DrawText("'P' preset  |  'F' Freeze  |  'B' or Space = Bypass", 24, 28, 10, GRAY);
 
         Rectangle sourceRec = { 0.0f, 0.0f, (float)oledCanvas.texture.width, (float)-oledCanvas.texture.height };
         Rectangle destRec = { (screenWidth - 256) / 2.0f, 46.0f, 256.0f, 128.0f };
@@ -180,15 +194,27 @@ int main() {
         // Freeze Toggle Button ('F')
         Rectangle freezeBtnRec = { 250.0f, 180.0f, 190.0f, 28.0f };
         bool freezeHover = CheckCollisionPointRec(mousePos, freezeBtnRec);
-        if (freezeHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (freezeHover && !bypassActive && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             guiSpectralFreeze.store(!freezeActive);
         }
-        DrawRectangleRec(freezeBtnRec, freezeActive ? RED : (freezeHover ? DARKGRAY : BLACK));
+        DrawRectangleRec(freezeBtnRec, freezeActive ? RED : (freezeHover && !bypassActive ? DARKGRAY : BLACK));
         DrawRectangleLines((int)freezeBtnRec.x, (int)freezeBtnRec.y, (int)freezeBtnRec.width, (int)freezeBtnRec.height, RED);
         DrawText(freezeActive ? "SPECTRAL FREEZE: ON" : "SPECTRAL FREEZE: OFF", 258, 187, 10, RAYWHITE);
 
+        // Bypass Button ('B' / Space): one big button, always visible
+        Rectangle bypassBtnRec = { 40.0f, 216.0f, 400.0f, 32.0f };
+        bool bypassHover = CheckCollisionPointRec(mousePos, bypassBtnRec);
+        if (bypassHover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            setBypassUi(!bypassActive);
+        }
+        DrawRectangleRec(bypassBtnRec, bypassActive ? RED : GetColor(bypassHover ? 0x1B5E20FF : 0x2E7D32FF));
+        DrawRectangleLines((int)bypassBtnRec.x, (int)bypassBtnRec.y, (int)bypassBtnRec.width, (int)bypassBtnRec.height, RAYWHITE);
+        DrawText(bypassActive ? "BYPASSED: clean signal.  Click or B / Space = effects ON"
+                              : "EFFECTS ON.  Click or B / Space = BYPASS",
+                 48, 227, 10, RAYWHITE);
+
         // Sliders
-        float yPos = 220.0f;
+        float yPos = 258.0f;
         auto drawSlider = [&](const char* label, float val, float minV, float maxV, std::atomic<float>& target, bool snapToZero = false) {
             DrawText(label, 40, yPos + 2, 10, LIGHTGRAY);
             DrawRectangle(140, yPos + 4, 280, 10, DARKGRAY);
