@@ -152,7 +152,7 @@ ctest --test-dir build-tests --output-on-failure
 
 ## Raspberry Pi Pico
 
-`pico/` is a separate CMake project that cross-compiles a **benchmark**. It runs the engine on synthetic input and reports, over USB serial, how much of the 1,451 µs real-time budget each 64-sample block uses. It builds for the **WeAct RP2350B Core** (RP2350B: Cortex-M33 with FPU, 520 KB RAM, 48 GPIO); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) explains the choice and lists what to buy. Setup, build and flashing instructions are in the header of [`pico/CMakeLists.txt`](pico/CMakeLists.txt) and in [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico). The benchmark has not yet been run on hardware.
+`pico/` is a separate CMake project that cross-compiles a **benchmark**. It runs the engine on synthetic input and reports, over USB serial, how much of the 1,451 µs real-time budget each 64-sample block uses. It builds for the **WeAct RP2350B Core** (RP2350B: Cortex-M33 with FPU, 520 KB RAM, 48 GPIO); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) explains the choice, the WM8731 audio design and the pin map, and lists what to buy. Setup, build and flashing instructions are in the header of [`pico/CMakeLists.txt`](pico/CMakeLists.txt) and in [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico). The benchmark has not yet been run on hardware.
 
 ---
 
@@ -160,7 +160,7 @@ ctest --test-dir build-tests --output-on-failure
 
 ```
 vocal-fx-processor/
-├── CMakeLists.txt              Desktop/test build: demonic_engine library, engine_dsp_test, sim_controls_test, vocal_desktop
+├── CMakeLists.txt              Desktop/test build: demonic_engine library, engine_dsp_test, sim_controls_test, hw_pinout_test, vocal_desktop
 ├── README.md                   This file
 ├── AGENTS.md                   Instructions for coding agents (CLAUDE.md is a symlink to it)
 ├── docs/
@@ -170,6 +170,7 @@ vocal-fx-processor/
 │   ├── demonic_engine.hpp      DemonicEngine class and VocalPreset struct
 │   ├── sim_controls.hpp        Simulator encoders: ranges, steps, display, preset values
 │   ├── sim_layout.hpp          Simulator enclosure geometry, hit-testing, knob dragging
+│   ├── hw_pinout.hpp           Planned hardware pin map (RP2350B + WM8731)
 │   ├── sim_font.hpp            Embedded DejaVu Sans Mono for the simulator
 │   └── dsp_pipeline.hpp        Empty placeholder (not used)
 ├── src/
@@ -180,6 +181,7 @@ vocal-fx-processor/
 ├── tests/
 │   ├── engine_dsp_test.cpp     Frequency-measuring DSP tests (registered with ctest)
 │   ├── sim_controls_test.cpp   Simulator layout and encoder tests (registered with ctest)
+│   ├── hw_pinout_test.cpp      Planned pin map checks (registered with ctest)
 │   └── engine_smoke_test.cpp   Out of date; not built
 ├── pico/
 │   ├── CMakeLists.txt          Separate Pico SDK project (setup notes in its header)

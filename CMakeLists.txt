@@ -28,7 +28,7 @@ endif()
 # ----------------------------------------------------------------------------------------------
 if(BUILD_TESTS)
     enable_testing()
-    foreach(test_name engine_dsp_test sim_controls_test)
+    foreach(test_name engine_dsp_test sim_controls_test hw_pinout_test)
         add_executable(${test_name} tests/${test_name}.cpp)
         target_link_libraries(${test_name} PRIVATE demonic_engine)
         add_test(NAME ${test_name} COMMAND ${test_name})
