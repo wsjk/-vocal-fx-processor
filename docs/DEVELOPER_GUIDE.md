@@ -41,6 +41,10 @@ Line numbers (`file:line`) refer to the code as it exists in the repository snap
 ```
 vocal-fx-processor/
 ├── CMakeLists.txt              Build recipe: engine library, tests, desktop app
+├── README.md                   Overview and quickstart
+├── AGENTS.md                   Notes for coding agents (CLAUDE.md is a symlink to it)
+├── docs/                       This guide and the User Guide
+├── .agents/skills/             Agent runbook, reference notes and build scripts
 ├── include/
 │   ├── demonic_engine.hpp      The DSP engine's "interface": class + preset struct   [implemented]
 │   └── dsp_pipeline.hpp        EMPTY (0 bytes), not used by the build
@@ -53,13 +57,13 @@ vocal-fx-processor/
 │   ├── CMakeLists.txt          Separate build for the Raspberry Pi Pico (needs the Pico SDK)
 │   └── main_pico.cpp           Benchmark: how much real-time budget does the engine use on an RP2040?
 ├── tests/
-│   ├── engine_smoke_test.cpp   Silence / NaN / peak-level checks on every preset
-│   └── engine_dsp_test.cpp     Measures output frequencies: pitch-shifter accuracy, sub-octave behaviour
+│   ├── engine_dsp_test.cpp     Measures output frequencies: pitch shifter, sub-octave, bypass   [built, in ctest]
+│   └── engine_smoke_test.cpp   OUT OF DATE: calls methods that no longer exist; not built (section 9)
 ├── portaudio/                  Vendored PortAudio source. Last-resort fallback only; listed in .gitignore
-└── .gitignore                  Ignores build/ and portaudio/
+└── .gitignore                  Ignores build/, build-tests/ and portaudio/
 ```
 
-The product itself is two files: the **engine** (`demonic_engine.hpp`/`.cpp`, about 270 lines of `.cpp`, all of the sound) and the **desktop app** (`main_desktop.cpp`, about 225 lines, everything around it). The engine has no dependency on audio hardware or graphics, which is why it can be tested and benchmarked by itself. `dsp_pipeline.*` are empty placeholders and can be deleted.
+The product itself is two files: the **engine** (`demonic_engine.hpp`/`.cpp`, about 300 lines of `.cpp`, all of the sound) and the **desktop app** (`main_desktop.cpp`, about 250 lines, everything around it). The engine has no dependency on audio hardware or graphics, which is why it can be tested and benchmarked by itself. `dsp_pipeline.*` are empty placeholders and can be deleted.
 
 ---
 
@@ -254,8 +258,8 @@ They communicate **only** through a set of global `std::atomic` variables (the "
 ```
                          UI THREAD (main, 60 fps)
   keyboard / mouse ───►  ┌─────────────────────────────┐
-                         │ handle P / F keys, buttons, │
-                         │ drag sliders                │
+                         │ handle P / F / B / Space,   │
+                         │ buttons, drag sliders       │
                          └───────┬─────────────▲───────┘
                        .store()  │             │  .load()
                                  ▼             │
@@ -263,7 +267,8 @@ They communicate **only** through a set of global `std::atomic` variables (the "
               │ guiDrive, guiSubBlend,  │  │ currentMicPeak          │
               │ guiRobotBlend, …        │  │ scopeBuffer / scopeHead │
               │ guiActivePreset         │  │ (for the OLED mock)     │
-              │ guiSpectralFreeze       │  └───▲─────────────────────┘
+              │ guiSpectralFreeze,      │  └───▲─────────────────────┘
+              │ guiBypass, guiPitch     │      │
               └───────┬─────────────────┘      │ .store()
                       │ .load()                │
                       ▼                        │
@@ -331,7 +336,7 @@ The preset check uses a `static` local, `lastPreset`, which persists across call
 1. `Pa_Initialize()` starts PortAudio.
 2. `Pa_OpenDefaultStream(&stream, 1, 1, paFloat32, SAMPLE_RATE, FRAMES_PER_BUFFER, audioCallback, nullptr)` — opens the default devices with **1 input channel, 1 output channel (mono), 32-bit float samples, 44.1 kHz, 64-frame blocks**, and registers `audioCallback`. (`&stream` passes the address of `stream` so the function can fill it in — an "output parameter".)
 3. `Pa_StartStream(stream)` — from here on, the callback is being called.
-4. `InitWindow(480, 630, ...)` creates the window; `SetTargetFPS(60)` limits the loop to 60 frames/second.
+4. `InitWindow(480, 668, ...)` creates the window; `SetTargetFPS(60)` limits the loop to 60 frames/second.
 5. `LoadRenderTexture(128, 64)` creates an off-screen 128×64 image — the fake OLED.
 
 Error handling is by return code, not exceptions: functions return `paNoError` on success and `main` prints and exits otherwise.
@@ -342,8 +347,8 @@ Each frame:
 
 1. **Keys:** `P` cycles `guiActivePreset`; `F` toggles `guiSpectralFreeze` (ignored while bypassed); `B` or `Space` toggles `guiBypass` (and clears `guiSpectralFreeze` when switching bypass on).
 2. **Snapshot:** reads every atomic into a local variable so the whole frame is drawn from one consistent set of values.
-3. **Draw the OLED** (lines 142–169) into the 128×64 off-screen texture: border, preset name, optional `[FREEZE ON]`, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to stay inside the display), and the mic-level bar.
-4. **Draw the window** (lines 171–244): scales the OLED texture up 2× and blits it (`DrawTexturePro`); draws the three buttons with hit-testing by `CheckCollisionPointRec`; draws the bypass button and eleven sliders with the `drawSlider` lambda.
+3. **Draw the OLED** (lines 142–169) into the 128×64 off-screen texture: border, preset name, `[BYPASS]` or `[FREEZE ON]` when active, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to stay inside the display; grey while bypassed, red while frozen), and the mic-level bar.
+4. **Draw the window** (lines 171–244): scales the OLED texture up 2× and blits it (`DrawTexturePro`); draws the three buttons (preset, freeze, and the wide bypass button) with hit-testing by `CheckCollisionPointRec`; then draws the eleven sliders with the `drawSlider` lambda.
 
 This style is called **immediate-mode UI**: there are no button or slider objects. Every frame the code asks "is the mouse over this rectangle and pressed?", acts on the answer, and draws it. The `drawSlider` lambda (line 218) both draws the bar and — if the mouse is held down inside it — computes the new value from the mouse x-position and `.store()`s it to the atomic.
 
@@ -552,7 +557,7 @@ CMake describes your project as a set of **targets** (things to build) and the *
 | Target | What it is | Depends on |
 |---|---|---|
 | `demonic_engine` | A static library built from `src/demonic_engine.cpp`. The DSP code, with no audio or graphics. | nothing |
-| `engine_smoke_test`, `engine_dsp_test` | The two test programs in `tests/`. | `demonic_engine` |
+| `engine_dsp_test` | The test program in `tests/` (the `foreach` in `CMakeLists.txt` lists only this one). | `demonic_engine` |
 | `vocal_desktop` | The desktop app. | `demonic_engine`, PortAudio, raylib (plus Apple system frameworks on macOS) |
 
 Splitting the engine into its own library is what lets the tests, the desktop app, and later the Pico build all share one copy of the DSP code.
@@ -562,7 +567,7 @@ Splitting the engine into its own library is what lets the tests, the desktop ap
 | Option | Default | Effect |
 |---|---|---|
 | `BUILD_DESKTOP` | ON | Build the desktop app. Turn OFF to build only the engine and tests, with no PortAudio or raylib needed. |
-| `BUILD_TESTS` | ON | Build the two test programs and register them with `ctest`. |
+| `BUILD_TESTS` | ON | Build `engine_dsp_test` and register it with `ctest`. |
 | `USE_SYSTEM_RAYLIB` | OFF | Use an installed raylib 5.0+ (`find_package`) instead of downloading raylib 5.0 at configure time. |
 
 Release (optimised) is the default build type, since real-time DSP needs it. Pass `-DCMAKE_BUILD_TYPE=Debug` to override.
@@ -579,13 +584,15 @@ Release (optimised) is the default build type, since real-time DSP needs it. Pas
 cmake -S . -B build                          # configure (downloads raylib the first time)
 cmake --build build                          # compile and link everything
 ./build/vocal_desktop                        # run the app
-cd build && ctest --output-on-failure        # run the tests
+ctest --test-dir build --output-on-failure   # run the tests
 
 cmake -S . -B build -DBUILD_DESKTOP=OFF      # engine + tests only (no PortAudio/raylib needed)
 cmake -S . -B build -DUSE_SYSTEM_RAYLIB=ON   # use Homebrew's raylib
 ```
 
-> **Verification status.** The engine, both test programs, and the Pico benchmark's logic were compiled and run on Linux with g++ when this version was written. The `CMakeLists.txt` and the desktop app change (the Pitch slider) were checked for syntax and structure, but were **not** built end-to-end with CMake, PortAudio, and raylib, so the first build on your Mac is the real test. If the configure step fails, the error message names the missing piece (PortAudio is the likeliest). The portable CMake structure is untested on Windows.
+With CMake 4 or newer, raylib 5.0's own `CMakeLists.txt` may refuse to configure. The project sets `CMAKE_POLICY_VERSION_MINIMUM=3.5` for you, but if it still complains, pass `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` on the command line (the helper scripts in `.agents/skills/vocal-fx-processor/scripts/` do this).
+
+> **Verification status.** The full CMake build (engine, `engine_dsp_test`, and `vocal_desktop` with PortAudio and the downloaded raylib) has been built on macOS, and `engine_dsp_test` passes there. The engine and tests also build and pass on Linux with g++. The desktop app is untested on Linux and Windows.
 
 The Raspberry Pi Pico build lives in a **separate** CMake project (`pico/CMakeLists.txt`) because it needs the Pico SDK and an ARM cross-compiler; see section 11.
 
@@ -650,43 +657,33 @@ The window is 668 px tall (`screenHeight`, line 102) and each slider takes 34 px
 
 ## 9. Testing without a microphone
 
-Because `DemonicEngine` has no dependency on audio hardware, tests can drive it from a plain program: generate a signal, run it through `processBlock`, and analyse what comes out. There are two test programs.
+Because `DemonicEngine` has no dependency on audio hardware, tests can drive it from a plain program: generate a signal, run it through `processBlock`, and analyse what comes out. The test program that is built and run is `engine_dsp_test.cpp`.
 
-### Running them
+### Running it
 
 With CMake (works for the engine alone, no PortAudio or raylib needed):
 
 ```bash
-cmake -S . -B build -DBUILD_DESKTOP=OFF
-cmake --build build
-cd build && ctest --output-on-failure
+cmake -S . -B build-tests -DBUILD_DESKTOP=OFF
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
 ```
 
-Or directly with a compiler, from the repo root:
+(`.agents/skills/vocal-fx-processor/scripts/build_tests.sh` runs exactly these three steps.) Or directly with a compiler, from the repo root:
 
 ```bash
-g++ -std=c++17 -Iinclude tests/engine_smoke_test.cpp src/demonic_engine.cpp -o smoke && ./smoke
-g++ -std=c++17 -Iinclude tests/engine_dsp_test.cpp   src/demonic_engine.cpp -o dsp_test && ./dsp_test
+g++ -std=c++17 -O2 -Iinclude tests/engine_dsp_test.cpp src/demonic_engine.cpp -o dsp_test && ./dsp_test
 ```
 
-Each prints `[PASS]`/`[FAIL]` lines and exits non-zero on failure (which is how `ctest` knows).
+It prints a `[PASS]`/`[FAIL]` line per check, ends with `ALL TESTS PASSED (0 failures)`, and exits non-zero on any failure (which is how `ctest` knows).
 
-### `engine_smoke_test.cpp`: does it stay sane?
+### `engine_smoke_test.cpp`: out of date, not built
 
-Checks that silence in gives silence out, and that every preset produces finite (non-NaN) output on a sine input, reporting its peak level. Expected output on the current code:
-
-```
-[PASS] silence in -> silence out
-[PASS] preset 0 (DEMONIC GROWL): finite=yes, peak=0.58
-[PASS] preset 1 (MEGATRON): finite=yes, peak=4.03  (WARNING: exceeds full scale)
-[PASS] preset 2 (CYBER DEMON): finite=yes, peak=4.15  (WARNING: exceeds full scale)
-```
-
-The warnings are informational (they do not fail the test) and document a real problem, issue 10.4.
+This file predates the current engine. It calls `resetSubToggleCount()` and `getSubToggleCount()`, which `DemonicEngine` no longer has, so it **does not compile**, and `CMakeLists.txt` does not build it. Everything it covered (initialisation, preset names, a sine through `processBlock`, the freeze flag, sub-octave activity) is covered more thoroughly by `engine_dsp_test.cpp`. Either delete it, or rewrite its sub-octave check to measure output energy the way `engine_dsp_test.cpp` does and add it to the `foreach` list in `CMakeLists.txt`.
 
 ### `engine_dsp_test.cpp`: does it sound right?
 
-Measures **frequencies in the output**:
+Measures **frequencies in the output**, plus bypass behaviour:
 
 | Test | What it checks |
 |---|---|
@@ -770,7 +767,7 @@ folded = std::abs(std::fmod(folded + 1.0f, 4.0f) - 2.0f) - 1.0f;
 
 This is meant to be a triangle wave bounded by ±1. But `std::fmod` keeps the **sign of its first argument** (unlike Python's `%`, which always returns a non-negative result for a positive divisor). When `folded + 1` is negative — which happens for the negative half of the waveform at higher fold settings — the result is not folded but mirrored upward to values as high as about +5. Measured with a loud 220 Hz sine at Drive 12: output range was ≈ ±1.1 at fold 0, **−1.9 … +3.9** at fold 2.5, and **−5.6 … +7.2** at fold 5. It is also asymmetric, creating a large DC offset. Above fold 2.5 the blend weight `(1 − 0.4 × fold)` turns negative, which compounds it.
 
-The MEGATRON (fold 3.0) and CYBER DEMON (fold 2.5) presets both sit in this range; the smoke test shows their peaks at about 4.0 and 4.2.
+The MEGATRON (fold 3.0) and CYBER DEMON (fold 2.5) presets both sit in this range; feeding each preset a 0.5-amplitude 220 Hz sine for 3 seconds gave output peaks of about **3.4** (MEGATRON) and **2.2** (CYBER DEMON), against 0.55 for DEMONIC GROWL (fold 1.0). Exact figures depend on the input. No test currently guards this.
 
 *Suggested fix:* use a true modulo that always returns a non-negative value, and limit the blend weight:
 
@@ -811,7 +808,9 @@ In practice both "work" on common hardware (a stale preset name or a slightly to
 
 **Fixed:** macOS `-framework` flags are now conditional on `if(APPLE)`; PortAudio is found via `pkg-config`, then `/opt/homebrew` and `/usr/local`, then the bundled copy, so Apple Silicon works without edits; the unneeded `ASM` language and the empty `dsp_pipeline.cpp` were removed from the build; the engine is a reusable library with tests registered in `ctest`; and the engine no longer uses `M_PI` (it uses a `float` constant, which also helps on the Pico, see section 11). The engine also gained an explicit `#include <iterator>`: it used `std::begin`/`std::end` and had been getting the header only by accident through an unused `#include <vector>`.
 
-**Still open:** the CMake file and desktop app have not been built end-to-end on any platform as part of this change (see the verification note in section 7); Windows is untested; and the `portaudio/` folder remains git-ignored, so a fresh clone relies on an installed PortAudio.
+**Since then:** the full CMake build, including the desktop app, has been built on macOS (see the verification note in section 7).
+
+**Still open:** Windows and the Linux desktop build are untested; the `portaudio/` folder remains git-ignored, so a fresh clone relies on an installed PortAudio; and `tests/engine_smoke_test.cpp` no longer compiles (section 9).
 
 ### 10.9 Freeze behaviour — *low* **[by inspection]**
 
@@ -825,7 +824,8 @@ Freeze captures the *oldest* 4,096 samples in the 500 ms echo buffer (audio from
 - **The noise gate has no hysteresis or release**, so quiet speech near the threshold chatters on and off.
 - **Mono only**, hard-wired to the default devices; no device selection or error recovery if a device disappears.
 - **Empty files** `dsp_pipeline.hpp/.cpp` are placeholders that nothing uses. Delete them or fill them in so newcomers aren't misled.
-- **No top-level README** in the repository yet (the guides in `docs/` could be linked from one).
+- **Committed build leftovers.** `dsp_test` (a compiled test binary) and `project_dump.txt` (a text dump of the sources) are checked in. Neither is used by the build. Delete them and add `dsp_test` to `.gitignore`.
+- ~~No top-level README~~: there now is one (`README.md`), and it links to these guides.
 
 ---
 
@@ -842,7 +842,7 @@ At 44.1 kHz a 64-sample block lasts 64 / 44,100 ≈ **1,451 µs**. At 133 MHz th
 The instructions are in the header of `pico/CMakeLists.txt`. In short:
 
 1. Install the Arm toolchain and clone the [Pico SDK](https://github.com/raspberrypi/pico-sdk) (with submodules); set `PICO_SDK_PATH`.
-2. Copy the SDK's `external/pico_sdk_import.cmake` into `pico/`.
+2. Copy the SDK's `external/pico_sdk_import.cmake` into `pico/`. This file is not in the repository, and the build stops at `include(pico_sdk_import.cmake)` without it.
 3. `cmake -S pico -B pico/build -DCMAKE_BUILD_TYPE=Release && cmake --build pico/build`
 4. Hold BOOTSEL, plug the Pico in, and copy `pico/build/vocal_pico_bench.uf2` to the drive that appears.
 5. Open the USB serial port (macOS: `screen /dev/tty.usbmodem* 115200`).
