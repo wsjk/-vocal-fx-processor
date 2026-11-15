@@ -2,7 +2,11 @@
 
 A real-time "demonic" vocal effects engine and guitar-pedal-style processor written in C++17.
 
-Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the pedal's 128×64 OLED display, and a hardware-agnostic DSP core intended for the Raspberry Pi Pico (RP2040).
+Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the whole pedal (OLED, encoders, footswitches), and a hardware-agnostic DSP core intended for the Raspberry Pi Pico (RP2040).
+
+<p align="center">
+  <img src="docs/images/simulator.png" alt="The desktop simulator: the pedal enclosure with a 128x64 OLED showing the preset name and waveform, eleven encoders with LED rings in VOICE, MANGLE and SPACE panels, and PRESET, FREEZE and BYPASS footswitches" width="720">
+</p>
 
 ---
 
