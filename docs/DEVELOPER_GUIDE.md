@@ -49,6 +49,7 @@ vocal-fx-processor/
 │   ├── demonic_engine.hpp      The DSP engine's "interface": class + preset struct   [implemented]
 │   ├── sim_controls.hpp        Simulator: the 11 encoders as data (range, step, display, presets)
 │   ├── sim_layout.hpp          Simulator: enclosure geometry, hit-testing, mouse-drag knob turning
+│   ├── hw_pinout.hpp           Planned hardware wiring: RP2350B pins for codec, OLED, encoders, footswitches
 │   ├── sim_font.hpp            Simulator: embedded DejaVu Sans Mono font (same as Phase Box)
 │   └── dsp_pipeline.hpp        EMPTY (0 bytes), not used by the build
 ├── src/
@@ -62,6 +63,7 @@ vocal-fx-processor/
 ├── tests/
 │   ├── engine_dsp_test.cpp     Measures output frequencies: pitch shifter, sub-octave, bypass   [built, in ctest]
 │   ├── sim_controls_test.cpp   Simulator layout and encoder logic, headless                     [built, in ctest]
+│   ├── hw_pinout_test.cpp      Planned pin map: no clashes, right pin types, one encoder each   [built, in ctest]
 │   └── engine_smoke_test.cpp   OUT OF DATE: calls methods that no longer exist; not built (section 9)
 ├── portaudio/                  Vendored PortAudio source. Last-resort fallback only; listed in .gitignore
 └── .gitignore                  Ignores build/, build-tests/ and portaudio/
@@ -568,7 +570,7 @@ CMake describes your project as a set of **targets** (things to build) and the *
 | Target | What it is | Depends on |
 |---|---|---|
 | `demonic_engine` | A static library built from `src/demonic_engine.cpp`. The DSP code, with no audio or graphics. | nothing |
-| `engine_dsp_test` | The test program in `tests/` (the `foreach` in `CMakeLists.txt` lists only this one). | `demonic_engine` |
+| `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test` | The test programs in `tests/` (the `foreach` in `CMakeLists.txt` lists them). | `demonic_engine` |
 | `vocal_desktop` | The desktop app. | `demonic_engine`, PortAudio, raylib (plus Apple system frameworks on macOS) |
 
 Splitting the engine into its own library is what lets the tests, the desktop app, and later the Pico build all share one copy of the DSP code.
@@ -578,7 +580,7 @@ Splitting the engine into its own library is what lets the tests, the desktop ap
 | Option | Default | Effect |
 |---|---|---|
 | `BUILD_DESKTOP` | ON | Build the desktop app. Turn OFF to build only the engine and tests, with no PortAudio or raylib needed. |
-| `BUILD_TESTS` | ON | Build `engine_dsp_test` and register it with `ctest`. |
+| `BUILD_TESTS` | ON | Build the three test programs and register them with `ctest`. |
 | `USE_SYSTEM_RAYLIB` | OFF | Use an installed raylib 5.0+ (`find_package`) instead of downloading raylib 5.0 at configure time. |
 
 Release (optimised) is the default build type, since real-time DSP needs it. Pass `-DCMAKE_BUILD_TYPE=Debug` to override.
@@ -722,6 +724,10 @@ Measures **frequencies in the output**, plus bypass behaviour:
 
 Checks the simulator without opening a window: the enclosure fits the window; the OLED is 128×64 at 3×; panels, encoders (with their labels), footswitches, LEDs and jacks sit where they should without overlapping; a click lands on exactly one control; every encoder's value maps to its ring and back, stops at its ends and steps as documented (one semitone for PITCH, which also snaps to 0 near the centre); values format as shown on screen; every preset value fits its encoder's range and loading a preset keeps the pitch; and `KnobDrag` turns the right way.
 
+### `hw_pinout_test.cpp`: does the planned wiring work?
+
+Checks `include/hw_pinout.hpp`, the planned pin map for the RP2350B (see [HARDWARE_PLAN.md](HARDWARE_PLAN.md)): every pin is GP0–GP47; none is used twice or collides with the board's LED, button, PSRAM select or the ADC pins; SDA/SCL are I²C0 pins; the I²S word clock is the pin after the bit clock; the codec's master clock is on a clock-output pin; and there is one encoder per `simctl` parameter.
+
 **Writing your own.** Use the helpers: `isolate(engine)` turns every optional effect off so only the one under test is audible; `render(engine, generator, seconds, keepSeconds)` feeds a signal in 64-sample blocks (the desktop app's block size) and returns the last part of the output; then assert on `magnitude_at` or `dominant_freq`.
 
 **Ideas for further tests:** assert that peak output stays ≤ 1.0 once a limiter is added (issue 10.2); that Delay Feedback of 1.05 stays bounded over 60 seconds; that the wavefolder stays within ±1 (issue 10.4); render an impulse and check echo positions (issue 10.5); write the output to a WAV file and listen to it.
@@ -859,7 +865,7 @@ It repeats a table of results every few seconds covering: a baseline with option
 - **Already done:** `M_PI` is a 64-bit `double`, so expressions such as `2.0f * M_PI * …` silently forced slow double-precision maths. The engine now uses a `float` constant (`kTwoPi`) instead.
 - **Candidate optimisations**, in rough order of expected payoff (measure after each change): replace the two per-sample `sin` calls with lookup tables or a recurrence oscillator; replace `tanh` with a cheap polynomial or lookup table; use a lookup table for the pitch crossfade `cos`; drop to a 22.05 kHz sample rate (halves the per-second work); use the second core for part of the chain; move hot paths to fixed-point integer arithmetic. The Pico SDK also ships optimised software float routines, which the benchmark already benefits from.
 - **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB: 35 % of the RP2350's 520 KB, 69 % of an RP2040's 264 KB)**, before the SDK's own needs, stacks, and audio I/O buffers. It must be a global or static object (`main_pico.cpp` does this), never a local variable. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
-- **I/O still to design.** An I²S codec for audio in and out, an SSD1306-style 128×64 OLED (the simulator's is already that size), and the simulator's controls: eleven encoders and three footswitches. The pin budget (about 32 of the 48 GPIO) and parts list are in [HARDWARE_PLAN.md](HARDWARE_PLAN.md); the exact pin map is still to do. Encoders (not pots) were chosen so that presets can move them.
+- **I/O.** A WM8731 codec over I²S (with an op-amp mic preamp in front), an SSD1306 128×64 OLED (the simulator's is already that size), and the simulator's controls: eleven encoders and three footswitches. The audio design, core split, latency and parts are in [HARDWARE_PLAN.md](HARDWARE_PLAN.md); the pin map is `include/hw_pinout.hpp` (33 of 48 GPIO). Encoders (not pots) were chosen so that presets can move them.
 - **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine`, read controls from encoders and footswitches, and call `processBlock` from a DMA or I²S interrupt, the same shape as the desktop app.
 
 ---

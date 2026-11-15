@@ -40,14 +40,14 @@ Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a 
 g++ -std=c++17 -O2 -Iinclude tests/engine_dsp_test.cpp src/demonic_engine.cpp -o dsp_test && ./dsp_test
 g++ -std=c++17 -Iinclude tests/sim_controls_test.cpp src/demonic_engine.cpp -o sim_test && ./sim_test
 ```
-Expect `ALL TESTS PASSED (0 failures)` from each. `engine_dsp_test` and `sim_controls_test` are built. `engine_smoke_test.cpp` is out of date and does not compile.
+Expect `ALL TESTS PASSED (0 failures)` from each. `engine_dsp_test`, `sim_controls_test` and `hw_pinout_test` are built. `engine_smoke_test.cpp` is out of date and does not compile.
 
 ### 3. RP2350 Benchmark Build (WeAct RP2350B Core)
 ```bash
 .agents/skills/vocal-fx-processor/scripts/build_pico.sh      # -> pico/build/vocal_pico_bench.uf2
 PICO_BOARD=pico .agents/skills/vocal-fx-processor/scripts/build_pico.sh   # original RP2040 Pico instead (fresh pico/build)
 ```
-The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `PICO_SDK_PATH` to `/Users/ww/src/pico-sdk`. `pico/CMakeLists.txt` defaults `PICO_BOARD` to `weact_studio_rp2350b_core` (Arm Cortex-M33 cores, FPU). Flash by holding BOOT and copying the `.uf2` to the `RP2350` drive (or use the `pico-hw-test` skill), then read the results with `screen /dev/tty.usbmodem* 115200`. Board choice, pin budget and parts: `docs/HARDWARE_PLAN.md`.
+The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `PICO_SDK_PATH` to `/Users/ww/src/pico-sdk`. `pico/CMakeLists.txt` defaults `PICO_BOARD` to `weact_studio_rp2350b_core` (Arm Cortex-M33 cores, FPU). Flash by holding BOOT and copying the `.uf2` to the `RP2350` drive (or use the `pico-hw-test` skill), then read the results with `screen /dev/tty.usbmodem* 115200`. Board choice, WM8731 audio design, core split and parts: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp` (checked by `tests/hw_pinout_test.cpp`).
 
 ---
 
