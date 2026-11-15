@@ -318,8 +318,18 @@ static void test_bypass_clears_runaway_feedback() {
     double before = 0; for (size_t i = onAt - 22050; i < onAt; ++i) before = std::fmax(before, std::fabs(outs[i]));
     double after = 0; bool finite = true;
     for (size_t i = onAt + 44100 + 2048; i < outs.size(); ++i) { after = std::fmax(after, std::fabs(outs[i])); finite = finite && std::isfinite(outs[i]); }
-    check(before > 5.0, "sanity: feedback 1.05 had run away (peak %.1f, many times full scale)", before);
+    check(before > 0.1, "sanity: feedback 1.05 keeps the echo circulating long after the input stopped (peak %.2f)", before);
     check(finite && after < 1e-6, "after a bypass cycle the runaway is gone (peak %.8f)", after);
+}
+
+static void test_extremes_stay_bounded() {
+    std::printf("\n-- Safety: extreme settings never exceed full scale --\n");
+    DemonicEngine e(static_cast<float>(kFs));
+    e.loadPreset(1); e.setDrive(12); e.setWavefold(5); e.setDelayFeedback(1.05f); e.setDelayMix(1); e.setReverbMix(1);
+    auto out = render(e, [](size_t n) { return (n < 44100) ? 0.9f * std::sin(2.0 * kPi * 220.0 * n / kFs) : 0.0f; }, 60.0, 60.0);
+    double peak = 0; bool finite = true;
+    for (float v : out) { peak = std::fmax(peak, std::fabs(v)); finite = finite && std::isfinite(v); }
+    check(finite && peak <= 1.0, "fold 5, drive 12, feedback 1.05 for 60 s: peak %.3f, all finite", peak);
 }
 
 int main() {
@@ -334,6 +344,7 @@ int main() {
     test_bypass_clears_tails();
     test_bypass_then_effects_return();
     test_bypass_clears_runaway_feedback();
+    test_extremes_stay_bounded();
     std::printf("\n%s (%d failure%s)\n", g_failures ? "SOME TESTS FAILED" : "ALL TESTS PASSED", g_failures,
                 g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

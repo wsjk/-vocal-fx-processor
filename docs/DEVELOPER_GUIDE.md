@@ -730,7 +730,7 @@ Checks the simulator without opening a window: the enclosure fits the window; th
 
 ## 10. Code review: known issues
 
-> **Status update.** Since the original review, issue **10.3** (no pitch shifting), issue **10.6** (unreliable sub-octave) and most of **10.8** (build portability) have been resolved; they are kept below, marked **RESOLVED**, as a record of what changed and why. Issue **10.1** (presets) was resolved with the pedal-style simulator. Issues **10.2, 10.4, 10.5, 10.7, 10.9** and the minor items in 10.10 are still open.
+> **Status update.** Since the original review, issue **10.3** (no pitch shifting), issue **10.6** (unreliable sub-octave) and most of **10.8** (build portability) have been resolved; they are kept below, marked **RESOLVED**, as a record of what changed and why. Issue **10.1** (presets) was resolved with the pedal-style simulator, and **10.2** and **10.4** (output beyond full scale) with the suggested fixes. Issues **10.5, 10.7, 10.9** and the minor items in 10.10 are still open.
 
 Findings are ordered roughly by impact. Items marked **[measured]** were confirmed by compiling `DemonicEngine` on its own and feeding it synthetic test signals (sine waves and impulses) — they are facts about the code, though real voices will vary in degree. Items marked **[by inspection]** come from reading the code.
 
@@ -740,7 +740,9 @@ When the preset changed, `loadPreset()` copied the preset into the engine, and t
 
 **Now:** the engine has `getPreset(i)`, and the UI thread's `selectPreset(i)` writes the preset's values into the encoder atomics before publishing the index, so the encoders turn to the preset and the callback applies them as usual (section 5.1). The app starts with `selectPreset(0)`, so the starting values are preset 0's. Pitch is still not part of presets.
 
-### 10.2 Delay feedback above 1.0 grows without limit, and nothing limits the output — *high* **[measured]**
+### 10.2 Delay feedback above 1.0 grew without limit, and nothing limited the output — **RESOLVED**
+
+**Now:** the echo is written back through `tanhf`, so above 1.0 it settles at a steady level instead of growing, and the mixed output is clamped to ±1 before the bypass crossfade. `test_extremes_stay_bounded` runs fold 5, drive 12 and feedback 1.05 for 60 s and checks the peak stays ≤ 1. The original analysis follows.
 
 `demonic_engine.cpp:273`. The DELAY FB encoder allows feedback up to 1.05 (its ring turns red above 1.0). With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
 
@@ -758,7 +760,9 @@ output[i] = std::clamp(output[i], -1.0f, 1.0f);   // or a soft limiter
 
 The engine stored a "formant shift" value that no code ever read, and the display's `PTCH:` label implied pitch shifting that did not exist. **Now:** `setPitchShift(cents)` drives a real pitch shifter (section 6.7), surfaced as the **PITCH** encoder in the desktop app; `setFormantShift` remains as an alias that forwards to it. Note that the shifter moves pitch and spectral shape together, so it is a pitch shifter, not a formant shifter (hence the rename). The `PTCH:` label is gone: the OLED now shows the preset name, or the value of the encoder being turned.
 
-### 10.4 The wavefolder escapes the ±1 range — *high* **[measured]**
+### 10.4 The wavefolder escaped the ±1 range — **RESOLVED**
+
+**Now:** the floored modulo and clamped blend weight below are in the engine (with `floorf`/`fabsf`). The original analysis follows.
 
 `demonic_engine.cpp:241`:
 

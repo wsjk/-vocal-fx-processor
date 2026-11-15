@@ -4,14 +4,7 @@ Condensed from `docs/DEVELOPER_GUIDE.md` §10, which has the full analysis and m
 
 ## OPEN — High Priority
 
-### 10.2 Delay feedback > 1.0 grows without limit; no output limiter
-**Problem:** `feedbackDelayBuffer[w] = wet + delayed * delayFeedback` has no bound. At 1.05 the peak reaches about 500,000 within 60 s. Nothing clamps the final output either.
-**Mitigation:** a bypass on/off cycle flushes the loop (this is tested).
-**Fix:** `feedbackDelayBuffer[w] = std::tanh(wet + delayed * delayFeedback);` plus a final `std::clamp(output[i], -1.0f, 1.0f)` or a soft limiter.
-
-### 10.4 Wavefolder escapes ±1
-**Problem:** `std::fmod` keeps the sign of its first argument, so `abs(fmod(x + 1, 4) − 2) − 1` is not bounded for negative input. The blend weight `1 − 0.4 × fold` also goes negative above fold 2.5. With a 0.5-amplitude 220 Hz sine, MEGATRON peaks at about 3.4 and CYBER DEMON at about 2.2.
-**Fix:** use a floored modulo, `x -= 4.0f * std::floor(x / 4.0f)`, followed by `folded = std::fabs(x − 2) − 1`, and clamp the weight with `k = std::min(0.4f × fold, 1.0f)`.
+None.
 
 ## OPEN — Medium / Low Priority
 
@@ -36,6 +29,8 @@ The capture starts at the echo write head (the oldest data, about 0.41–0.5 s a
 
 ## RESOLVED
 
+- **10.2** Delay feedback above 1.0 grew without limit. The loop now writes back through `tanhf`, and the output is clamped to ±1.
+- **10.4** The wavefolder escaped ±1 (`fmod` sign, negative blend weight). It now uses a floored modulo and a clamped weight.
 - **10.1** Presets were overwritten by the sliders, so they changed only the name. Fixed with `DemonicEngine::getPreset()` and `selectPreset()` in the desktop app, which writes the preset into the encoder atomics (`guiParam[]`) before publishing the index.
 - **10.3** `setFormantShift` did nothing. There is now a real pitch shifter (`setPitchShift`), and `setFormantShift` forwards to it.
 - **10.6** The sub-octave detector was unreliable. It was rewritten as a rising-edge Schmitt trigger on a 2-pole LPF, with level-relative hysteresis `max(0.004, 0.25 × env)`. This is tested from 110 to 440 Hz at amplitudes 0.1 to 0.9.

@@ -12,6 +12,7 @@
 // A reading above 100 % means the engine cannot keep up and glitches would be unavoidable.
 //
 // Build and flash instructions: see pico/CMakeLists.txt.
+#include <cmath>
 #include <cstdio>
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
