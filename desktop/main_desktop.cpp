@@ -293,7 +293,7 @@ int main() {
 
     const Layout L = Layout::make();
     SetConfigFlags(FLAG_WINDOW_HIGHDPI | FLAG_MSAA_4X_HINT);   // sharp text and smooth rings on Retina screens
-    InitWindow(L.window_w, L.window_h, "Demonic Vocal FX - Pedal Simulator");
+    InitWindow(L.window_w, L.window_h, "Demonic Vocal FX " VFX_VERSION " - Pedal Simulator");
     load_fonts();
     SetTargetFPS(60);
 

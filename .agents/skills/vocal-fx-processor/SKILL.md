@@ -86,7 +86,7 @@ The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `P
 | **DSP Tests** | `tests/engine_dsp_test.cpp` | `isolate()`, `render()`, `run_recorded()`, `block_has()`, `dominant_freq()`, `magnitude_at()` |
 | **Stale test** | `tests/engine_smoke_test.cpp` | Calls removed `resetSubToggleCount()`/`getSubToggleCount()`; not in CMake |
 | **Build System** | `CMakeLists.txt` | `demonic_engine` static lib; options `BUILD_DESKTOP`, `BUILD_TESTS`, `USE_SYSTEM_RAYLIB` |
-| **Human docs** | `README.md`, `CHANGELOG.md`, every `docs/*.md` (`USER_GUIDE.md`, `DEVELOPER_GUIDE.md`, `HARDWARE_PLAN.md`) | Check all of them before every commit or PR (see the docs-check rule in `AGENTS.md`). The developer guide cites `file:line`; the changelog gets a line under today's date heading. |
+| **Human docs** | `README.md`, every `docs/*.md` (`USER_GUIDE.md`, `DEVELOPER_GUIDE.md`, `HARDWARE_PLAN.md`) | Check all of them before every commit or PR (see the docs-check rule in `AGENTS.md`). The developer guide cites `file:line`. No changelog file: the PR title becomes the release note, and a `minor`/`major` label sets the version bump. |
 
 ---
 

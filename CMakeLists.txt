@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(vocal_fx_processor C CXX)
+include(cmake/version.cmake)   # VFX_VERSION, from the latest v* git tag
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -98,6 +99,7 @@ if(BUILD_DESKTOP)
 
     add_executable(vocal_desktop desktop/main_desktop.cpp)
     target_link_libraries(vocal_desktop PRIVATE demonic_engine ${VFX_PORTAUDIO_TARGET} raylib)
+    target_compile_definitions(vocal_desktop PRIVATE VFX_VERSION="${VFX_VERSION}")
 
     if(APPLE)
         target_link_libraries(vocal_desktop PRIVATE

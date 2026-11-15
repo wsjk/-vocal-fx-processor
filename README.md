@@ -162,7 +162,6 @@ ctest --test-dir build-tests --output-on-failure
 vocal-fx-processor/
 ├── CMakeLists.txt              Desktop/test build: demonic_engine library, engine_dsp_test, sim_controls_test, hw_pinout_test, vocal_desktop
 ├── README.md                   This file
-├── CHANGELOG.md                Notable changes, newest first
 ├── AGENTS.md                   Instructions for coding agents (CLAUDE.md is a symlink to it)
 ├── docs/
 │   ├── USER_GUIDE.md           End-user guide: controls, parameters, presets, recipes, troubleshooting
@@ -188,6 +187,8 @@ vocal-fx-processor/
 ├── pico/
 │   ├── CMakeLists.txt          Separate Pico SDK project (setup notes in its header)
 │   └── main_pico.cpp           RP2350 real-time budget benchmark
+├── cmake/version.cmake         Version number from the latest v* git tag
+├── .github/                    Release workflow: tags and publishes a GitHub Release on every merge to main
 ├── .agents/skills/vocal-fx-processor/   Agent runbook, references and build scripts
 └── portaudio/                  Optional vendored PortAudio source (git-ignored; last-resort fallback)
 ```
@@ -199,4 +200,4 @@ vocal-fx-processor/
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md):** using the pedal: controls, every encoder, presets, Freeze, Bypass, sound recipes, troubleshooting.
 - **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md):** how the code works, written for Python programmers new to C++. It covers threads and atomics, each DSP stage, the build system, how to extend the engine, tests, known issues and the Pico port.
 - **[docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md):** the planned hardware pedal: why the WeAct RP2350B Core, the WM8731 codec and mic preamp, firmware layout and latency, the pin map, what to buy, and next steps.
-- **[CHANGELOG.md](CHANGELOG.md):** notable changes, newest first.
+- **[Releases](https://github.com/wsjk/-vocal-fx-processor/releases):** the changelog. Every merge to `main` is tagged and released, and the notes list the merged PRs. The version shows in the simulator's title bar and the Pico benchmark's output.
