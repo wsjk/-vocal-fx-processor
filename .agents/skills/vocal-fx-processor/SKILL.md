@@ -95,14 +95,11 @@ The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `P
 
 See [known_issues.md](./references/known_issues.md) for details.
 
-- **Open, high priority:**
-  - delay feedback above 1.0 is unbounded and there is no output limiter (10.2);
-  - the wavefolder escapes ±1 because of the sign of `fmod` (10.4).
 - **Open, medium/low priority:**
   - delay and reverb tap times are wrong because delay = size − offset, and the "reverb" is a two-tap echo (10.5);
   - cross-thread race on `scopeBuffer` (10.7);
   - freeze captures the oldest audio and has a click at the loop seam (10.9).
-- **Resolved:** presets now turn the encoders (10.1), `setFormantShift` is now an alias for `setPitchShift` (10.3), the sub-octave detector was rewritten as a Schmitt trigger (10.6), and build portability is fixed (10.8).
+- **Resolved:** presets now turn the encoders (10.1), feedback is bounded and the output clamped to ±1 (10.2), the wavefolder stays within ±1 (10.4), `setFormantShift` is now an alias for `setPitchShift` (10.3), the sub-octave detector was rewritten as a Schmitt trigger (10.6), and build portability is fixed (10.8).
 
 ---
 

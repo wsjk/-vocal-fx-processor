@@ -33,7 +33,6 @@ Talk or sing into a microphone and the engine turns your voice into a pitch-shif
 
 These are tracked in [Developer Guide §10](docs/DEVELOPER_GUIDE.md#10-code-review-known-issues):
 
-- **There is no output limiter.** Wavefolder settings above about 2.5 and Delay Feedback above 1.0 can push the output far beyond full scale.
 - **The Pico build is a benchmark only.** There is no audio-capable firmware yet.
 
 ---

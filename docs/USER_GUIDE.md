@@ -80,7 +80,7 @@ The build looks for PortAudio in the standard places on both Intel and Apple Sil
 
 - **Use headphones.** The app plays your processed voice straight back out. With speakers, the mic picks the sound up again and you get an ear-piercing howl (acoustic feedback).
 - **Know your panic button.** Press **`B`** or **Space** (or click the BYPASS footswitch) to bypass all effects instantly. It also flushes any runaway echo. See [Bypass](#bypass-effects-off-in-one-press).
-- **Start with the system volume low.** There is no master volume control and no output limiter. Some settings can produce output well above full scale — high **FOLD** (wavefolder) values and **DELAY FB above 100%** in particular — which clips harshly and can be very loud.
+- **Start with the system volume low.** There is no master volume control. The output is capped at full scale, but high **FOLD** (wavefolder) values and **DELAY FB above 100%** push it right up to that cap, which sounds harshly clipped and can be very loud.
 - **Wired headphones give the lowest delay.** Bluetooth adds noticeable lag on top of the app's own tiny delay.
 
 ---
@@ -178,9 +178,9 @@ Your voice passes through a chain of effects, always in the same order. Knowing 
 | **SUB OCT** | 0 – 100% | 85% | Level of the low, rumbling layer. 0 = none. | Gives weight and menace. Works best on a single, steady voice; breathy or noisy sounds can make it flutter. It tracks the pitch you sing, including any Pitch shift. |
 | **ROBOT** (clank) | 0 – 100% | 0% | How much of the ring-modulated "robot" sound replaces your natural voice. | 0 = natural voice; near 1 = fully robotic. |
 | **CLANK RATE** | 10 – 200 Hz | 45 | The frequency of the ring-modulation tone. | Low = slow, throbbing tremolo-like clank. High = harsher, more metallic. Speaking louder pushes the rate up slightly. Only audible when ROBOT is above 0. |
-| **FOLD** (wavefolder) | 0 – 5 | 1.0 | Amount of waveform folding (harsh, synthetic overtones). Below about 0.1 it switches off. | **Keep this at 2 or below** unless you want a very loud, harsh output. Above that, the output can far exceed full scale. |
+| **FOLD** (wavefolder) | 0 – 5 | 1.0 | Amount of waveform folding (harsh, synthetic overtones). Below about 0.1 it switches off. | **Keep this at 2 or below** unless you want a very loud, harsh output. Above that, the output is often pushed up to the full-scale cap. |
 | **DECIMATE** | x1 – x6 | x1 | Lo-fi crunch. 1 = off. 2 ≈ half the sample rate, 3 ≈ one third, up to 6. | Only whole numbers count (x2.5 behaves like x2). A fixed ~6-bit quantisation is always applied, so even at 1 the sound has a slightly gritty edge. |
-| **DELAY FB** (feedback) | 0 – 105% | 60% | How much of each echo is fed back to create further repeats. | Below 100% the repeats fade out. **At 100% they never fade. Above 100% (red ring) they get louder** until the output clips. Turn it back below 100% to stop it. |
+| **DELAY FB** (feedback) | 0 – 105% | 60% | How much of each echo is fed back to create further repeats. | Below 100% the repeats fade out. **At 100% they never fade. Above 100% (red ring) they build up to a loud, steady level.** Turn it back below 100% to stop it. |
 | **DELAY MIX** | 0 – 100% | 35% | How loud the echoes are compared to the direct sound. | Delay time is fixed at about 200 ms. |
 | **REVERB** ("catacomb") | 0 – 100% | 45% | How much of the cavernous echo tail is mixed in. | Fixed character (distinct echoes at about 120 ms and 270 ms), more like a stone-room slapback than a smooth hall. |
 | **WET/DRY** | 0 – 100% | 85% | 0% = only your untouched voice. 100% = only the processed sound. | Lower values are a handy way to keep words intelligible. |
@@ -236,7 +236,7 @@ Press **`B`** or **`Space`** (or click the BYPASS footswitch) to switch every ef
 - **Echo and reverb tails are wiped**, so nothing from before the bypass comes back when you switch effects on again. You will not hear a ghost of what you said earlier.
 - **Spectral Freeze is switched off**, and the `F` key and FREEZE footswitch do nothing while bypassed. Freeze the sound again after you switch effects back on.
 
-**Bypass as a panic button.** If the echo has built up out of control (DELAY FB above 100% makes it grow louder and louder), press **`B`** twice: once to bypass, once to come back. The runaway echo is gone. Also turn DELAY FB back below 100%, or it will start to build again.
+**Bypass as a panic button.** If the echo has built up out of control (DELAY FB above 100% keeps it going at a loud, steady level), press **`B`** twice: once to bypass, once to come back. The runaway echo is gone. Also turn DELAY FB back below 100%, or it will start to build again.
 
 **What bypass is not.** It is *software* bypass. Your voice still travels through the computer (a small, fixed delay of a couple of milliseconds plus your audio device's own delay). If you want a completely delay-free clean voice, use your audio interface's own **Direct Monitor** switch instead. Just be careful not to leave Direct Monitor on while you are listening to the effects (you would hear both).
 
@@ -265,7 +265,7 @@ REVERB ~0.7, DELAY MIX ~0.4, DELAY FB ~0.7, DRIVE ~4, other effects low, WET/DRY
 Sustain a vowel, press `F`, stop singing, and speak or hum over the drone. Add reverb for width.
 
 **Self-oscillating echo (use with care)**
-Raise DELAY FB to about 100% and DELAY MIX to ~0.5 and say one short word. The echo keeps circulating. Turn DELAY FB back below 100% to let it fade. Going above 100% makes it grow louder and louder.
+Raise DELAY FB to about 100% and DELAY MIX to ~0.5 and say one short word. The echo keeps circulating. Turn DELAY FB back below 100% to let it fade. Going above 100% makes it build up to a loud, steady level.
 
 ---
 
@@ -312,7 +312,7 @@ These are things you may notice and why:
 
 - **Pitch shifting is a simple, fast design.** It moves your pitch and the voice's character together (it does not preserve the "vocal tract" sound), and it adds a slight flutter that grows with bigger shifts. In testing, pitch landed within a few cents on voice-like sounds, and within about 40 cents even at a full octave on a pure whistle-like tone.
 - **Sub-Octave needs a steady voice.** It follows your pitch, so it works best on one clear sung or spoken note. Whispers, breathy sounds, heavy noise, or several voices at once can make it flutter or drop out. It is silent when you are silent.
-- **No output level protection.** High FOLD values and DELAY FB above 100% can push the output beyond full scale, causing clipping.
+- **Output protection is a hard limit.** Nothing goes past full scale, but high FOLD values and DELAY FB above 100% hit that limit and sound harshly clipped.
 - **Bypass is software bypass.** It is exact and click-free, but your voice still passes through the computer. For zero-delay monitoring use your audio interface's Direct Monitor.
 - **Mono, 44.1 kHz only**, using the default audio devices.
 - **Fixed echo and reverb timings.** Only their amounts can be adjusted.

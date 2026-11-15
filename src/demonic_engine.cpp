@@ -238,8 +238,11 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         
         if (wavefoldDrive > 0.1f) {
             float folded = wet * (1.0f + wavefoldDrive * 2.0f);
-            folded = std::abs(std::fmod(folded + 1.0f, 4.0f) - 2.0f) - 1.0f;
-            wet = (wet * (1.0f - 0.4f * wavefoldDrive)) + (folded * 0.4f * wavefoldDrive);
+            float x = folded + 1.0f;
+            x -= 4.0f * floorf(x * 0.25f);                     // non-negative modulo (fmod keeps the sign)
+            folded = fabsf(x - 2.0f) - 1.0f;                     // triangle, always within [-1, 1]
+            const float k = std::min(0.4f * wavefoldDrive, 1.0f); // blend weights stay in [0, 1]
+            wet = wet * (1.0f - k) + folded * k;
         }
 
         // 5. Decimation
@@ -270,7 +273,8 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         float delayedSample = feedbackDelayBuffer[delayTap];
         
         // Feed signal + feedback into delay buffer (feedback >= 1.0 creates infinite repeat / self-oscillation)
-        feedbackDelayBuffer[feedbackDelayWriteHead] = wet + (delayedSample * delayFeedback);
+        // tanhf bounds the loop: above 1.0 the echo sustains at a steady level instead of growing forever.
+        feedbackDelayBuffer[feedbackDelayWriteHead] = tanhf(wet + (delayedSample * delayFeedback));
         feedbackDelayWriteHead = (feedbackDelayWriteHead + 1) % 22050;
 
         wet = (wet * (1.0f - delayMix)) + (delayedSample * delayMix);
@@ -293,7 +297,8 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         dcOutPrev = dcBlocked;
         wet = dcBlocked;
 
-        float processed = (dry * (1.0f - wetDryMix)) + (wet * wetDryMix);
+        // Safety clamp: nothing past full scale reaches the output.
+        float processed = std::clamp((dry * (1.0f - wetDryMix)) + (wet * wetDryMix), -1.0f, 1.0f);
 
         // Crossfade to / from the untouched input when bypass is switched.
         if (bypassTarget) bypassBlend = std::min(1.0f, bypassBlend + bypassStep);
