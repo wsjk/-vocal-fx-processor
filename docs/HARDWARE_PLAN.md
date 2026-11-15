@@ -30,7 +30,7 @@ mic (XLR / TRS) ─► preamp +20…+50 dB ─► WM8731 ADC ─I²S─► RP235
                     DC blocking)                           core 0: controls, OLED, codec setup
 ```
 
-- **Codec: WM8731** (Wolfson / Cirrus Logic). Stereo 24-bit ADC and DAC, set up over I²C (address 0x1A) at boot: input select, mic boost, mute, I²S format. The RP2350 is I²S clock master and drives the data through PIO and DMA. Breakout boards exist (for example MikroElektronika "Audio Codec Proto").
+- **Codec: WM8731** (Wolfson / Cirrus Logic). Stereo 24-bit ADC and DAC, set up over I²C (address 0x1A) at boot: input select, mic boost, mute, I²S format. The RP2350 is I²S clock master and drives the data through PIO and DMA. Cheap modules and the bare chip are both easy to find; §5 lists what to check before buying.
 - **Mic preamp.** The WM8731's own mic input has only about +20 dB of boost, which is not enough for dynamic mics. Put a low-noise op-amp preamp (NE5532 or TL072) in front of the line input, with a gain trim of roughly +20 to +50 dB and DC blocking.
 - **Output.** An op-amp buffer and low-pass reconstruction filter after the DAC, to a ¼" TRS (or XLR) line out.
 - **Phantom power (optional).** For condenser mics: a 48 V boost converter feeding the mic through two matched 6.81 kΩ resistors, with 47 µF coupling capacitors before the preamp.
@@ -76,7 +76,11 @@ That is 33 of 48 pins.
 
 **For the first audio prototype:**
 
-- WM8731 codec breakout board.
+- **WM8731 codec**, bought cheap (rough prices, 2026-11-15): a generic WM8731 module from AliExpress (about $5–10), or the bare chip from Mouser, Digi-Key or LCSC (about $3–6) on an SSOP-28 adapter board. Avoid paying about $30 for a branded breakout such as MikroE "Audio Codec Proto"; at that price the RP2350B + codec costs as much as an Electrosmith Daisy Seed, which has its own codec. Before buying a module, check that:
+  - MCLK is on the header and can be driven from outside. If the module has its own 12.288 MHz oscillator, it must be possible to disconnect it, because §2 feeds MCLK from GP21.
+  - I²C control mode is selected (MODE low) and CSB is low, which gives address 0x1A.
+  - The line input is on the header. The mic preamp drives it.
+- **Fallback if no suitable WM8731 module turns up:** a PCM1808 ADC module and a PCM5102A DAC module (about $2–4 each). Neither needs I²C setup, and the PCM5102A makes its own clock from the I²S bit clock. The PCM1808 still needs a master clock: GP21's 12 MHz gives 46.875 kHz rather than 48 kHz, or the RP2350 can make about 12.288 MHz with a fractional divider, which adds jitter. Using them would change §2, §4 and `include/hw_pinout.hpp`.
 - Mic preamp and output buffer: NE5532 or TL072 op-amps, plus passives; an XLR or TRS mic jack and a ¼" TRS output jack.
 - Two 3.3 V low-dropout regulators (analog and digital).
 - 128×64 SSD1306 OLED on I²C.
