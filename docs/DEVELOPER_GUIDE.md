@@ -25,7 +25,7 @@ Line numbers (`file:line`) refer to the code as it exists in the repository snap
 
 ## 1. Project at a glance
 
-**What it is.** A real-time vocal effects processor. A microphone signal goes in, passes through a chain of ten effect stages, and comes out of the speakers. The goal is a standalone guitar-pedal-style device built on a Raspberry Pi Pico (RP2040), with a desktop version that simulates the whole pedal (enclosure, 128×64 OLED, encoders, footswitches) so the effects can be developed on a laptop first.
+**What it is.** A real-time vocal effects processor. A microphone signal goes in, passes through a chain of ten effect stages, and comes out of the speakers. The goal is a standalone guitar-pedal-style device built on an RP2350 board (WeAct RP2350B Core), with a desktop version that simulates the whole pedal (enclosure, 128×64 OLED, encoders, footswitches) so the effects can be developed on a laptop first.
 
 **Technology**
 
@@ -58,7 +58,7 @@ vocal-fx-processor/
 │   └── main_desktop.cpp        Desktop app: audio I/O + the simulated pedal (raylib)  [implemented]
 ├── pico/
 │   ├── CMakeLists.txt          Separate build for the Raspberry Pi Pico (needs the Pico SDK)
-│   └── main_pico.cpp           Benchmark: how much real-time budget does the engine use on an RP2040?
+│   └── main_pico.cpp           Benchmark: how much real-time budget does the engine use on the RP2350?
 ├── tests/
 │   ├── engine_dsp_test.cpp     Measures output frequencies: pitch shifter, sub-octave, bypass   [built, in ctest]
 │   ├── sim_controls_test.cpp   Simulator layout and encoder logic, headless                     [built, in ctest]
@@ -834,33 +834,32 @@ Freeze captures the *oldest* 4,096 samples in the 500 ms echo buffer (audio from
 
 ## 11. Toward the Raspberry Pi Pico
 
-The hardware target is an RP2040 (dual Cortex-M0+ at 133 MHz, 264 KB RAM). The first step of the port is not audio I/O but a go/no-go question: **can the RP2040 run the engine in real time at all?** `pico/main_pico.cpp` answers it by running the engine on synthetic input on the device and reporting how much of the real-time budget it uses.
+The hardware target is the **WeAct RP2350B Core**: an RP2350B with two Cortex-M33 cores at 150 MHz, a single-precision FPU, 520 KB RAM and 48 GPIO. It replaced the earlier RP2040 (Cortex-M0+ at 133 MHz, no FPU, 264 KB) because the panel needs about 32 GPIO; [HARDWARE_PLAN.md](HARDWARE_PLAN.md) has the comparison, pin budget and shopping list. The first step of the port is not audio I/O but a go/no-go question: **can the chip run the engine in real time at all?** `pico/main_pico.cpp` answers it by running the engine on synthetic input on the device and reporting how much of the real-time budget it uses.
 
 ### The budget
 
-At 44.1 kHz a 64-sample block lasts 64 / 44,100 ≈ **1,451 µs**. At 133 MHz that is about **193,000 CPU cycles per block, or about 3,000 cycles per sample**, to run every stage, plus the audio driver, display, and buttons. The benchmark prints microseconds per block and the percentage of 1,451 µs used. Rough guide: under 50 % is comfortable, 50–80 % is tight, and over 100 % cannot work without optimisation.
+At 44.1 kHz a 64-sample block lasts 64 / 44,100 ≈ **1,451 µs**. At 150 MHz that is about **218,000 CPU cycles per block, or about 3,400 cycles per sample** (on an RP2040 at 133 MHz: about 193,000 and 3,000), to run every stage, plus the audio driver, display, and buttons. The benchmark prints microseconds per block and the percentage of 1,451 µs used. Rough guide: under 50 % is comfortable, 50–80 % is tight, and over 100 % cannot work without optimisation.
 
 ### Running the benchmark
 
 The instructions are in the header of `pico/CMakeLists.txt`. In short:
 
 1. Install the Arm toolchain and clone the [Pico SDK](https://github.com/raspberrypi/pico-sdk) (with submodules); set `PICO_SDK_PATH`.
-2. Copy the SDK's `external/pico_sdk_import.cmake` into `pico/`. This file is not in the repository, and the build stops at `include(pico_sdk_import.cmake)` without it.
-3. `cmake -S pico -B pico/build -DCMAKE_BUILD_TYPE=Release && cmake --build pico/build`
-4. Hold BOOTSEL, plug the Pico in, and copy `pico/build/vocal_pico_bench.uf2` to the drive that appears.
-5. Open the USB serial port (macOS: `screen /dev/tty.usbmodem* 115200`).
+2. `cmake -S pico -B pico/build -DCMAKE_BUILD_TYPE=Release && cmake --build pico/build` (or `.agents/skills/vocal-fx-processor/scripts/build_pico.sh`). This builds for the WeAct RP2350B Core; add `-DPICO_BOARD=pico2` or `-DPICO_BOARD=pico` for a Raspberry Pi Pico 2 or original Pico.
+3. Hold BOOT (BOOTSEL on a Pico), plug the board in, and copy `pico/build/vocal_pico_bench.uf2` to the drive that appears (`RP2350`, or `RPI-RP2` for an RP2040).
+4. Open the USB serial port (macOS: `screen /dev/tty.usbmodem* 115200`).
 
 It repeats a table of results every few seconds covering: a baseline with optional effects off, baseline plus pitch shift, each of the three presets, and a worst case (MEGATRON + pitch shift + freeze).
 
-> **Not yet run on hardware.** The benchmark's logic was compiled and run on a desktop (with a stand-in for the SDK's timing functions) to confirm it works, but that says nothing about Pico speed, since a desktop CPU is hundreds of times faster. The Pico SDK build files were written from the SDK's documented structure and have not been built here. Treat the first on-device run as the real measurement.
+> **Not yet run on hardware.** The benchmark builds with Pico SDK 2.3.1 for the WeAct RP2350B Core (and for the original Pico), and its logic was run on a desktop with a stand-in for the SDK's timing functions. That says nothing about speed on the chip, since a desktop CPU is hundreds of times faster. Treat the first on-device run as the real measurement.
 
 ### Things to expect and what to try if it is too slow
 
-- **No hardware floating point.** The M0+ has no FPU; every `float` operation runs in software. The engine does `sinf` twice per sample (chorus LFO, ring modulator), `tanhf` once, plus `floorf`, `fmodf`, `roundf` and, while the pitch shifter is crossfading, `cosf`. These are the first suspects.
+- **Floating point.** The RP2350's Cortex-M33 has a single-precision FPU, so `+ − × ÷` and square roots on `float` are single instructions. Library functions (`sinf`, `tanhf`, …) are still dozens of instructions each, and an RP2040's M0+ has no FPU at all, so there every `float` operation runs in software. The engine does `sinf` twice per sample (chorus LFO, ring modulator), `tanhf` once, plus `floorf`, `fmodf`, `roundf` and, while the pitch shifter is crossfading, `cosf`. These are the first suspects.
 - **Already done:** `M_PI` is a 64-bit `double`, so expressions such as `2.0f * M_PI * …` silently forced slow double-precision maths. The engine now uses a `float` constant (`kTwoPi`) instead.
 - **Candidate optimisations**, in rough order of expected payoff (measure after each change): replace the two per-sample `sin` calls with lookup tables or a recurrence oscillator; replace `tanh` with a cheap polynomial or lookup table; use a lookup table for the pitch crossfade `cos`; drop to a 22.05 kHz sample rate (halves the per-second work); use the second core for part of the chain; move hot paths to fixed-point integer arithmetic. The Pico SDK also ships optimised software float routines, which the benchmark already benefits from.
-- **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB, 69 % of the 264 KB RAM)**, before the SDK's own needs, stacks, and audio I/O buffers. It must be a global or static object (`main_pico.cpp` does this), never a local variable. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
-- **I/O still to design.** An ADC or I²S codec for audio in and out, an SSD1306-style 128×64 OLED (the simulator's is already that size), and the simulator's controls: eleven encoders and three footswitches. The simulated enclosure is a proposal, not a finished hardware design; encoders (not pots) were chosen so that presets can move them.
+- **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB: 35 % of the RP2350's 520 KB, 69 % of an RP2040's 264 KB)**, before the SDK's own needs, stacks, and audio I/O buffers. It must be a global or static object (`main_pico.cpp` does this), never a local variable. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
+- **I/O still to design.** An I²S codec for audio in and out, an SSD1306-style 128×64 OLED (the simulator's is already that size), and the simulator's controls: eleven encoders and three footswitches. The pin budget (about 32 of the 48 GPIO) and parts list are in [HARDWARE_PLAN.md](HARDWARE_PLAN.md); the exact pin map is still to do. Encoders (not pots) were chosen so that presets can move them.
 - **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine`, read controls from encoders and footswitches, and call `processBlock` from a DMA or I²S interrupt, the same shape as the desktop app.
 
 ---

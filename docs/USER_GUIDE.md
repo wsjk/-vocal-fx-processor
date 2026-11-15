@@ -318,4 +318,4 @@ These are things you may notice and why:
 - **Fixed echo and reverb timings.** Only their amounts can be adjusted.
 - **No saving of settings.** Your encoder changes are lost when you load another preset or restart.
 - **Only tested on macOS-style setups.** The desktop app has not been built or tested on Linux or Windows.
-- **No hardware (Raspberry Pi Pico) version yet.** The simulated enclosure shows what an RP2040 pedal could look like; it is not a finished hardware design. The repository now includes a benchmark program for finding out whether the Pico can run the effects in real time (see the Developer Guide), but there is no audio-capable firmware yet.
+- **No hardware version yet.** The simulated enclosure shows what the pedal could look like; it is not a finished hardware design. The planned board is a WeAct RP2350B Core (see `docs/HARDWARE_PLAN.md`). The repository includes a benchmark program for finding out whether it can run the effects in real time (see the Developer Guide), but there is no audio-capable firmware yet.

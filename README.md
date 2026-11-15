@@ -2,7 +2,7 @@
 
 A real-time "demonic" vocal effects engine and guitar-pedal-style processor written in C++17.
 
-Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the whole pedal (OLED, encoders, footswitches), and a hardware-agnostic DSP core intended for the Raspberry Pi Pico (RP2040).
+Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the whole pedal (OLED, encoders, footswitches), and a hardware-agnostic DSP core intended for an RP2350 board (WeAct RP2350B Core).
 
 <p align="center">
   <img src="docs/images/simulator.png" alt="The desktop simulator: the pedal enclosure with a 128x64 OLED showing the preset name and waveform, eleven encoders with LED rings in VOICE, MANGLE and SPACE panels, and PRESET, FREEZE and BYPASS footswitches" width="720">
@@ -152,7 +152,7 @@ ctest --test-dir build-tests --output-on-failure
 
 ## Raspberry Pi Pico
 
-`pico/` is a separate CMake project that cross-compiles a **benchmark**. It runs the engine on synthetic input and reports, over USB serial, how much of the 1,451 µs real-time budget each 64-sample block uses. Setup, build and flashing instructions are in the header of [`pico/CMakeLists.txt`](pico/CMakeLists.txt) and in [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico). You must copy `pico_sdk_import.cmake` from the Pico SDK into `pico/` first. The benchmark has not yet been run on hardware.
+`pico/` is a separate CMake project that cross-compiles a **benchmark**. It runs the engine on synthetic input and reports, over USB serial, how much of the 1,451 µs real-time budget each 64-sample block uses. It builds for the **WeAct RP2350B Core** (RP2350B: Cortex-M33 with FPU, 520 KB RAM, 48 GPIO); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) explains the choice and lists what to buy. Setup, build and flashing instructions are in the header of [`pico/CMakeLists.txt`](pico/CMakeLists.txt) and in [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico). The benchmark has not yet been run on hardware.
 
 ---
 
@@ -183,7 +183,7 @@ vocal-fx-processor/
 │   └── engine_smoke_test.cpp   Out of date; not built
 ├── pico/
 │   ├── CMakeLists.txt          Separate Pico SDK project (setup notes in its header)
-│   └── main_pico.cpp           RP2040 real-time budget benchmark
+│   └── main_pico.cpp           RP2350 real-time budget benchmark
 ├── .agents/skills/vocal-fx-processor/   Agent runbook, references and build scripts
 └── portaudio/                  Optional vendored PortAudio source (git-ignored; last-resort fallback)
 ```

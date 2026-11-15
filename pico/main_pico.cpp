@@ -1,8 +1,8 @@
-// Raspberry Pi Pico (RP2040) benchmark for DemonicEngine.
+// RP2350 / RP2040 benchmark for DemonicEngine (built for the WeAct RP2350B Core by default).
 //
-// Step one of the hardware port is not audio I/O, it is answering one question: can the RP2040 run
-// the engine in real time at all? The Cortex-M0+ cores have no floating-point unit, and the engine
-// does float maths (sin, tanh, ...) on every sample.
+// Step one of the hardware port is not audio I/O, it is answering one question: can the chip run
+// the engine in real time at all? The engine does float maths (sin, tanh, ...) on every sample. The
+// RP2350's Cortex-M33 cores have a single-precision FPU; the RP2040's Cortex-M0+ cores do not.
 //
 // This program runs the engine on synthetic input, measures how long each 64-sample block takes, and
 // prints the result over USB serial. Nothing here touches a microphone, DAC, or display.
@@ -17,6 +17,12 @@
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "demonic_engine.hpp"
+
+#if PICO_RP2350
+static const char* const kChip = "RP2350";
+#else
+static const char* const kChip = "RP2040";
+#endif
 
 namespace {
 
@@ -94,8 +100,8 @@ int main() {
     while (true) {
         const uint32_t mhz = clock_get_hz(clk_sys) / 1000000u;
         const float cyclesPerSample = static_cast<float>(mhz) * 1.0e6f / kSampleRate;
-        printf("\n=== DemonicEngine on RP2040 | clk_sys %u MHz | engine %u bytes ===\n",
-               static_cast<unsigned>(mhz), static_cast<unsigned>(sizeof(DemonicEngine)));
+        printf("\n=== DemonicEngine on %s | clk_sys %u MHz | engine %u bytes ===\n",
+               kChip, static_cast<unsigned>(mhz), static_cast<unsigned>(sizeof(DemonicEngine)));
         printf("Real-time budget per %u-sample block: %.0f us (about %.0f CPU cycles per sample)\n",
                static_cast<unsigned>(kBlock), kBudgetUs, cyclesPerSample);
 
