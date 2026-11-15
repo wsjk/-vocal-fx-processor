@@ -28,5 +28,5 @@ Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch 
   - `docs/USER_GUIDE.md`: controls, presets and behaviour the user sees.
   - `docs/HARDWARE_PLAN.md`: board, codec, pins (`include/hw_pinout.hpp`) and parts.
   - `README.md`: a new or renamed file goes in "Repository Structure", and a new doc also goes in "Documentation".
-  - `CHANGELOG.md`: add a line under `## [Unreleased]` for each user- or developer-visible change.
+  - `CHANGELOG.md`: add a line for each user- or developer-visible change, ending with the PR number, under today's `## YYYY-MM-DD` heading (create it at the top if it isn't there).
   Say in the PR description which docs you updated, or that none needed it. For a full audit, use the `docs-drift-check` skill.

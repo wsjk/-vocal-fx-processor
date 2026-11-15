@@ -1,27 +1,20 @@
 # Changelog
 
-Notable changes to this project, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). There are no version numbers yet, so each entry has a date and its pull-request number.
+Notable changes to this project, newest first, grouped by the date they reached `main`. Each line ends with its pull-request number. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-Add a line under **Unreleased** with every change that a user or developer would notice. When a batch of changes is tagged as a release, rename the heading to the version and date.
-
-## [Unreleased]
-
-### Added
-- `CHANGELOG.md`.
-- A docs-check rule in `AGENTS.md`: before every commit or PR, go through `README.md`, this changelog and every `docs/*.md`.
-
-### Changed
-- README now lists `docs/HARDWARE_PLAN.md` and this changelog under "Documentation" and "Repository Structure".
+Every PR adds its lines under the heading for the day it merges, creating that heading at the top if it doesn't exist yet.
 
 ## 2026-11-15
 
 ### Added
+- `CHANGELOG.md`, and a docs-check rule in `AGENTS.md`: before every commit or PR, go through `README.md`, this changelog and every `docs/*.md`. (#10)
 - Hardware plan for the WM8731 codec: op-amp mic preamp, output buffer, a 12 MHz MCLK from the board's crystal on GP21, the core split, a latency table and a shopping list. Corrections to an outside hardware spec are in `docs/HARDWARE_PLAN.md` §7. (#9)
 - `include/hw_pinout.hpp`, the planned RP2350B pin map, checked by the new `tests/hw_pinout_test.cpp` (registered with ctest). (#9)
 - `docs/HARDWARE_PLAN.md`: board choice (pin budget, RAM, FPU; Pico, Pico 2 and Black Pill compared), parts, next steps. (#8)
 - `pico/pico_sdk_import.cmake` is now committed, so there is no manual copy step. (#8)
 
 ### Changed
+- README lists `docs/HARDWARE_PLAN.md` and this changelog under "Documentation" and "Repository Structure". (#10)
 - The Pico build targets the **WeAct RP2350B Core** (`PICO_BOARD=weact_studio_rp2350b_core`) by default. `pico2` or `pico` still work. (#8)
 - The benchmark reports the chip it runs on (RP2350 or RP2040). (#8)
 
