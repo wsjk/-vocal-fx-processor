@@ -100,8 +100,8 @@ int main() {
     while (true) {
         const uint32_t mhz = clock_get_hz(clk_sys) / 1000000u;
         const float cyclesPerSample = static_cast<float>(mhz) * 1.0e6f / kSampleRate;
-        printf("\n=== DemonicEngine on %s | clk_sys %u MHz | engine %u bytes ===\n",
-               kChip, static_cast<unsigned>(mhz), static_cast<unsigned>(sizeof(DemonicEngine)));
+        printf("\n=== vocal-fx %s | DemonicEngine on %s | clk_sys %u MHz | engine %u bytes ===\n",
+               VFX_VERSION, kChip, static_cast<unsigned>(mhz), static_cast<unsigned>(sizeof(DemonicEngine)));
         printf("Real-time budget per %u-sample block: %.0f us (about %.0f CPU cycles per sample)\n",
                static_cast<unsigned>(kBlock), kBudgetUs, cyclesPerSample);
 

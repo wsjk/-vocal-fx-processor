@@ -591,6 +591,12 @@ Release (optimised) is the default build type, since real-time DSP needs it. Pas
 - **raylib:** downloaded and built from source by CMake's `FetchContent` (needs internet on the first configure), unless `USE_SYSTEM_RAYLIB` is ON.
 - **macOS frameworks** (`CoreAudio`, `Cocoa`, `OpenGL`, and so on) are linked only `if(APPLE)`, so the file no longer breaks other platforms at that step.
 
+### Version numbers and releases
+
+Every merge to `main` is a release. `.github/workflows/release.yml` (logic in `.github/scripts/release.sh`) tags the merge commit `vX.Y.Z` and publishes a [GitHub Release](https://github.com/wsjk/-vocal-fx-processor/releases) whose notes list the merged PRs by title. Those notes are the project's changelog. The bump is a patch (0.1.0 → 0.1.1) unless the PR has a `minor` or `major` label; `.github/release.yml` groups the notes by the same labels. The first release is v0.1.0.
+
+`cmake/version.cmake`, included by both this file and `pico/CMakeLists.txt`, sets `VFX_VERSION` from `git describe` when CMake configures: `0.3.0` on a release commit, `0.3.0-2-gabc1234` two commits later, with `-dirty` for uncommitted changes, and `0.0.0-g<sha>` before the first tag. The desktop window title and the Pico benchmark's banner show it. Re-run `cmake` to pick up a new commit or tag.
+
 ### Common commands
 
 ```bash

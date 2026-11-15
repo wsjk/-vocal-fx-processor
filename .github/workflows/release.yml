@@ -1,0 +1,28 @@
+# Every merge to main is a release: tag the merge commit and publish a GitHub Release whose
+# notes list the merged PRs. The bump is patch by default; label the PR `minor` or `major`
+# for more. The first release is v0.1.0. Logic: .github/scripts/release.sh
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write        # create the tag and the release
+  pull-requests: read    # read the merged PR's labels
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # all tags, to find the previous version
+      - name: Tag and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/release.sh

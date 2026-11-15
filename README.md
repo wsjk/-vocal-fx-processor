@@ -165,7 +165,8 @@ vocal-fx-processor/
 ├── AGENTS.md                   Instructions for coding agents (CLAUDE.md is a symlink to it)
 ├── docs/
 │   ├── USER_GUIDE.md           End-user guide: controls, parameters, presets, recipes, troubleshooting
-│   └── DEVELOPER_GUIDE.md      Architecture, stage-by-stage DSP walkthrough, C++ primer, known issues, Pico notes
+│   ├── DEVELOPER_GUIDE.md      Architecture, stage-by-stage DSP walkthrough, C++ primer, known issues, Pico notes
+│   └── HARDWARE_PLAN.md        Board choice, WM8731 audio design, pin map, shopping list, next steps
 ├── include/
 │   ├── demonic_engine.hpp      DemonicEngine class and VocalPreset struct
 │   ├── sim_controls.hpp        Simulator encoders: ranges, steps, display, preset values
@@ -186,6 +187,8 @@ vocal-fx-processor/
 ├── pico/
 │   ├── CMakeLists.txt          Separate Pico SDK project (setup notes in its header)
 │   └── main_pico.cpp           RP2350 real-time budget benchmark
+├── cmake/version.cmake         Version number from the latest v* git tag
+├── .github/                    Release workflow: tags and publishes a GitHub Release on every merge to main
 ├── .agents/skills/vocal-fx-processor/   Agent runbook, references and build scripts
 └── portaudio/                  Optional vendored PortAudio source (git-ignored; last-resort fallback)
 ```
@@ -196,3 +199,5 @@ vocal-fx-processor/
 
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md):** using the pedal: controls, every encoder, presets, Freeze, Bypass, sound recipes, troubleshooting.
 - **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md):** how the code works, written for Python programmers new to C++. It covers threads and atomics, each DSP stage, the build system, how to extend the engine, tests, known issues and the Pico port.
+- **[docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md):** the planned hardware pedal: why the WeAct RP2350B Core, the WM8731 codec and mic preamp, firmware layout and latency, the pin map, what to buy, and next steps.
+- **[Releases](https://github.com/wsjk/-vocal-fx-processor/releases):** the changelog. Every merge to `main` is tagged and released, and the notes list the merged PRs. The version shows in the simulator's title bar and the Pico benchmark's output.

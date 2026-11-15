@@ -13,7 +13,7 @@ Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch 
 - **Build desktop:** `.agents/skills/vocal-fx-processor/scripts/build_desktop.sh` (or `cmake -B build -S . && cmake --build build -j4`)
 - **Run tests:** `.agents/skills/vocal-fx-processor/scripts/build_tests.sh` (builds into `build-tests/` and runs `ctest`: `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test`)
 - **Build Pico:** `.agents/skills/vocal-fx-processor/scripts/build_pico.sh` (WeAct RP2350B Core by default; `PICO_BOARD=pico2` or `pico` to change). Hardware decisions: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp`
-- **Human docs:** [README.md](README.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)
+- **Human docs:** [README.md](README.md) and every file in [docs/](docs/) ([USER_GUIDE.md](docs/USER_GUIDE.md), [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md))
 
 ## Rules
 
@@ -23,4 +23,10 @@ Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch 
 - `dsp_pipeline.hpp` / `dsp_pipeline.cpp` are empty stubs. All active code is in `demonic_engine.hpp/.cpp`.
 - `tests/engine_smoke_test.cpp` is out of date (it calls removed methods) and is not built. Add tests to `tests/engine_dsp_test.cpp`.
 - Desktop audio↔UI communication uses `std::atomic` only. No mutexes in the audio callback.
-- When you change behaviour, update `docs/DEVELOPER_GUIDE.md` (including its `file:line` references) and `docs/USER_GUIDE.md`.
+- **Docs check before every commit or PR.** Run `ls docs/*.md`, then go through `README.md` and every file listed; update any that the change makes wrong or incomplete. In particular:
+  - `docs/DEVELOPER_GUIDE.md`: keep its `file:line` references pointing at the right code.
+  - `docs/USER_GUIDE.md`: controls, presets and behaviour the user sees.
+  - `docs/HARDWARE_PLAN.md`: board, codec, pins (`include/hw_pinout.hpp`) and parts.
+  - `README.md`: a new or renamed file goes in "Repository Structure", and a new doc also goes in "Documentation".
+  - There is no changelog file. Each merge to `main` is released automatically, and the release notes are the merged PR titles, so write the PR title as a release-note line. Label the PR `minor` for a new feature or behaviour change, or `major` for a breaking one; otherwise it is a patch release (see Developer Guide §7).
+  Say in the PR description which docs you updated, or that none needed it. For a full audit, use the `docs-drift-check` skill.

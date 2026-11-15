@@ -30,6 +30,7 @@ endif()
 include(pico_sdk_import.cmake)   # must come before project(); a copy of $PICO_SDK_PATH/external/pico_sdk_import.cmake
 
 project(vocal_pico C CXX ASM)
+include(../cmake/version.cmake)   # VFX_VERSION, from the latest v* git tag
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -41,6 +42,7 @@ add_executable(vocal_pico_bench
 
 target_include_directories(vocal_pico_bench PRIVATE ../include)
 target_link_libraries(vocal_pico_bench PRIVATE pico_stdlib)
+target_compile_definitions(vocal_pico_bench PRIVATE VFX_VERSION="${VFX_VERSION}")
 
 pico_enable_stdio_usb(vocal_pico_bench 1)    # printf over the USB cable
 pico_enable_stdio_uart(vocal_pico_bench 0)

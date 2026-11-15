@@ -1,0 +1,9 @@
+# Sections for the auto-generated release notes (see workflows/release.yml).
+changelog:
+  categories:
+    - title: Breaking changes
+      labels: [major]
+    - title: New features
+      labels: [minor]
+    - title: Fixes and other changes
+      labels: ["*"]
