@@ -2,7 +2,11 @@
 
 A real-time "demonic" vocal effects engine and guitar-pedal-style processor written in C++17.
 
-Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the pedal's 128×64 OLED display, and a hardware-agnostic DSP core intended for the Raspberry Pi Pico (RP2040).
+Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the whole pedal (OLED, encoders, footswitches), and a hardware-agnostic DSP core intended for the Raspberry Pi Pico (RP2040).
+
+<p align="center">
+  <img src="docs/images/simulator.png" alt="The desktop simulator: the pedal enclosure with a 128x64 OLED showing the preset name and waveform, eleven encoders with LED rings in VOICE, MANGLE and SPACE panels, and PRESET, FREEZE and BYPASS footswitches" width="720">
+</p>
 
 ---
 
@@ -22,14 +26,13 @@ Talk or sing into a microphone and the engine turns your voice into a pitch-shif
   11. **"Catacomb" reverb.** Two feedback taps at about 122 ms and 272 ms. This is a multi-tap echo, not a diffuse reverb.
   12. **DC blocker**, then the **wet/dry mix**.
 - **True bypass.** A 5 ms crossfade, then the output is a bit-for-bit copy of the input. All effect memory (echo and reverb tails, freeze loop, filters) is wiped, so bypass doubles as a panic button for a runaway echo.
-- **Simulated pedal GUI (raylib):** a 128×64 OLED mock with an output waveform and a mic level bar, preset, freeze and bypass buttons, and 11 sliders. Controls reach the audio thread through `std::atomic` values.
+- **Simulated pedal (raylib):** the window shows the pedal enclosure: a 128×64 OLED (output waveform, mic level, preset name or the value being turned), 11 endless encoders with LED value rings in VOICE / MANGLE / SPACE panels, PRESET / FREEZE / BYPASS footswitches with LEDs, and top-mounted jacks. Loading a preset turns the encoders to its values. Controls reach the audio thread through `std::atomic` values. Layout and encoder logic are plain headers, tested headlessly.
 - **Embedded-minded core:** `float` maths only (no `M_PI` or double literals), no dynamic allocation (all buffers are fixed-size members, `sizeof(DemonicEngine)` = 186,824 bytes ≈ 182 KB), and no dependencies beyond the C++ standard library.
 
 ### Current limitations
 
 These are tracked in [Developer Guide §10](docs/DEVELOPER_GUIDE.md#10-code-review-known-issues):
 
-- **Presets change only the displayed name.** The sliders overwrite the preset values in the next audio callback.
 - **There is no output limiter.** Wavefolder settings above about 2.5 and Delay Feedback above 1.0 can push the output far beyond full scale.
 - **The Pico build is a benchmark only.** There is no audio-capable firmware yet.
 
@@ -121,10 +124,10 @@ Build options: `-DBUILD_DESKTOP=OFF` builds only the engine and tests (no PortAu
 
 | Key / Control | Action |
 |---|---|
-| **`P`** / Preset button | Cycle presets (`DEMONIC GROWL`, `MEGATRON`, `CYBER DEMON`) |
-| **`F`** / Freeze button | Toggle Spectral Freeze. This does nothing while bypassed. |
-| **`B`** or **`Space`** / Bypass button | True bypass on/off. This also switches Freeze off. |
-| **Mouse click / drag** | Set any of the 11 sliders: Pitch, Drive, Sub-Octave, Robot Clank, Clank Rate, Wavefolder, Decimation, Delay Feedback, Delay Mix, Catacomb Rev, Wet/Dry Mix |
+| **`P`** / PRESET footswitch | Load the next preset (`DEMONIC GROWL`, `MEGATRON`, `CYBER DEMON`); the encoders turn to its values |
+| **`F`** / FREEZE footswitch | Toggle Spectral Freeze. This does nothing while bypassed. |
+| **`B`** or **`Space`** / BYPASS footswitch | True bypass on/off. This also switches Freeze off. |
+| **Mouse drag / scroll on an encoder** | Turn any of the 11 encoders: PITCH, DRIVE, SUB OCT, ROBOT, CLANK RATE, FOLD, DECIMATE, DELAY FB, DELAY MIX, REVERB, WET/DRY. Drag round the ring (or up/down from the centre); scroll for single steps. |
 | **`Esc`** / close window | Quit |
 
 ---
@@ -158,7 +161,7 @@ ctest --test-dir build-tests --output-on-failure
 
 ```
 vocal-fx-processor/
-├── CMakeLists.txt              Desktop/test build: demonic_engine library, engine_dsp_test, vocal_desktop
+├── CMakeLists.txt              Desktop/test build: demonic_engine library, engine_dsp_test, sim_controls_test, vocal_desktop
 ├── README.md                   This file
 ├── AGENTS.md                   Instructions for coding agents (CLAUDE.md is a symlink to it)
 ├── docs/
@@ -166,14 +169,18 @@ vocal-fx-processor/
 │   └── DEVELOPER_GUIDE.md      Architecture, stage-by-stage DSP walkthrough, C++ primer, known issues, Pico notes
 ├── include/
 │   ├── demonic_engine.hpp      DemonicEngine class and VocalPreset struct
+│   ├── sim_controls.hpp        Simulator encoders: ranges, steps, display, preset values
+│   ├── sim_layout.hpp          Simulator enclosure geometry, hit-testing, knob dragging
+│   ├── sim_font.hpp            Embedded DejaVu Sans Mono for the simulator
 │   └── dsp_pipeline.hpp        Empty placeholder (not used)
 ├── src/
 │   ├── demonic_engine.cpp      The whole DSP engine (standard library only)
 │   └── dsp_pipeline.cpp        Empty placeholder (not used)
 ├── desktop/
-│   └── main_desktop.cpp        Desktop app: PortAudio callback + raylib OLED/slider UI
+│   └── main_desktop.cpp        Desktop app: PortAudio callback + raylib pedal simulator
 ├── tests/
 │   ├── engine_dsp_test.cpp     Frequency-measuring DSP tests (registered with ctest)
+│   ├── sim_controls_test.cpp   Simulator layout and encoder tests (registered with ctest)
 │   └── engine_smoke_test.cpp   Out of date; not built
 ├── pico/
 │   ├── CMakeLists.txt          Separate Pico SDK project (setup notes in its header)
@@ -186,5 +193,5 @@ vocal-fx-processor/
 
 ## Documentation
 
-- **[docs/USER_GUIDE.md](docs/USER_GUIDE.md):** using the pedal: controls, every slider, presets, Freeze, Bypass, sound recipes, troubleshooting.
+- **[docs/USER_GUIDE.md](docs/USER_GUIDE.md):** using the pedal: controls, every encoder, presets, Freeze, Bypass, sound recipes, troubleshooting.
 - **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md):** how the code works, written for Python programmers new to C++. It covers threads and atomics, each DSP stage, the build system, how to extend the engine, tests, known issues and the Pico port.

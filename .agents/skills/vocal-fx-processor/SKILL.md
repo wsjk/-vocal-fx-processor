@@ -38,8 +38,9 @@ Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a 
 
 # Direct compilation (quick iteration):
 g++ -std=c++17 -O2 -Iinclude tests/engine_dsp_test.cpp src/demonic_engine.cpp -o dsp_test && ./dsp_test
+g++ -std=c++17 -Iinclude tests/sim_controls_test.cpp src/demonic_engine.cpp -o sim_test && ./sim_test
 ```
-Expect `ALL TESTS PASSED (0 failures)`. Only `engine_dsp_test` is built. `engine_smoke_test.cpp` is out of date and does not compile.
+Expect `ALL TESTS PASSED (0 failures)` from each. `engine_dsp_test` and `sim_controls_test` are built. `engine_smoke_test.cpp` is out of date and does not compile.
 
 ### 3. RP2040 Pico Benchmark Build
 ```bash
@@ -58,19 +59,20 @@ The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `P
 2. Add a public setter (`setMyParam(float)`) and a matching `float myParam` member.
 3. Initialise the state in the constructor initialiser list, **in header declaration order**, and zero it again in `resetState()` in `src/demonic_engine.cpp`.
 4. Insert the processing at the right point in the `processBlock()` sample loop, working on `wet`.
-5. Wire it into the desktop app (see "Add a GUI Parameter").
+5. Wire it into the desktop app (see "Add an Encoder").
 6. Add a test in `tests/engine_dsp_test.cpp` using the `isolate()` + `render()` + `magnitude_at()`/`dominant_freq()` pattern. Use `block_has(n, t)` for mid-render switches, never `n == t`.
 
 ### Add a Preset
 1. Increment `NUM_PRESETS` in `include/demonic_engine.hpp`.
 2. Add a `presets[i] = {"NAME", drive, sub, robot, freq, fold, decim, delayFB, delayMix, revMix, mix};` line in the constructor.
-3. Note that presets currently only change the displayed name (see known issue 10.1).
+3. Loading it turns the encoders (`selectPreset` in `desktop/main_desktop.cpp`, via `simctl::preset_values`). A new preset field also needs a line in `simctl::preset_values`.
 
-### Add a GUI Parameter (Desktop)
-1. Add a `std::atomic<float> guiMyParam(default)` global in `desktop/main_desktop.cpp`.
-2. Call `demonic.setMyParam(guiMyParam.load())` in `audioCallback`, after `setBypass` and before `setSpectralFreeze`.
-3. In the UI loop, snapshot it (`float myVal = guiMyParam.load();`) and add `drawSlider("Label", myVal, min, max, guiMyParam);`.
-4. Each slider takes 34 px. The 11 existing sliders run from y = 258 to about 632 in a 668 px window, so increase `screenHeight` first.
+### Add an Encoder (Desktop simulator)
+1. In `include/sim_controls.hpp`, add `P_MY_PARAM` to `simctl::Param` inside its group's run, and a matching `spec()` row (label, printf format, display scale, min, max, step per click, bipolar, warn_above, group). Order of the enum = order of the table.
+2. Call `demonic.setMyParam(guiParam[P_MY_PARAM].load())` in `audioCallback`, after `setBypass` and before `setSpectralFreeze`.
+3. Give it a start value in `main()` next to the pitch one, or add it to presets and `simctl::preset_values`.
+4. Drawing, hit-testing and turning are automatic: `Layout::make()` spaces each group's encoders across its panel. VOICE has room for one more; MANGLE and SPACE hold four each. Run `ctest`; `sim_controls_test` fails if anything overlaps.
+5. Layout rules mirror the Phase Box simulator (`raylib-hardware-sim` skill): geometry and value logic stay free of raylib so they are unit-tested; only `main_desktop.cpp` draws.
 
 ---
 
@@ -79,7 +81,8 @@ The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `P
 | Domain / Task | Target Files | Key Symbols / Notes |
 | :--- | :--- | :--- |
 | **DSP Engine** | `include/demonic_engine.hpp`, `src/demonic_engine.cpp` | `DemonicEngine`, `processBlock()`, `resetState()`, `setBypass()`, `VocalPreset`, `kPitchWindow`, `kPitchFade` |
-| **Desktop App** | `desktop/main_desktop.cpp` | `audioCallback()`, `gui*` atomics, `drawSlider` lambda, `setBypassUi` lambda |
+| **Desktop App** | `desktop/main_desktop.cpp` | `audioCallback()`, `guiParam[]` atomics, `selectPreset()`, `render_oled()`, `draw_encoder()`, `toggleBypass` lambda |
+| **Simulator logic** | `include/sim_controls.hpp`, `include/sim_layout.hpp`, `tests/sim_controls_test.cpp` | `simctl::spec()`, `norm`/`from_norm`/`step`, `preset_values`; `simlayout::Layout::make()`, `KnobDrag` |
 | **Pico Firmware** | `pico/main_pico.cpp`, `pico/CMakeLists.txt` | Benchmark only (`kScenarios`, `measureUsPerBlock`); no audio I/O yet |
 | **DSP Tests** | `tests/engine_dsp_test.cpp` | `isolate()`, `render()`, `run_recorded()`, `block_has()`, `dominant_freq()`, `magnitude_at()` |
 | **Stale test** | `tests/engine_smoke_test.cpp` | Calls removed `resetSubToggleCount()`/`getSubToggleCount()`; not in CMake |
@@ -93,14 +96,13 @@ The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `P
 See [known_issues.md](./references/known_issues.md) for details.
 
 - **Open, high priority:**
-  - presets are overwritten by the sliders (10.1);
   - delay feedback above 1.0 is unbounded and there is no output limiter (10.2);
   - the wavefolder escapes ±1 because of the sign of `fmod` (10.4).
 - **Open, medium/low priority:**
   - delay and reverb tap times are wrong because delay = size − offset, and the "reverb" is a two-tap echo (10.5);
-  - cross-thread races on `currentPresetIndex` and `scopeBuffer` (10.7);
+  - cross-thread race on `scopeBuffer` (10.7);
   - freeze captures the oldest audio and has a click at the loop seam (10.9).
-- **Resolved:** `setFormantShift` is now an alias for `setPitchShift` (10.3), the sub-octave detector was rewritten as a Schmitt trigger (10.6), and build portability is fixed (10.8).
+- **Resolved:** presets now turn the encoders (10.1), `setFormantShift` is now an alias for `setPitchShift` (10.3), the sub-octave detector was rewritten as a Schmitt trigger (10.6), and build portability is fixed (10.8).
 
 ---
 
