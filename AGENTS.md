@@ -1,18 +1,18 @@
 # Vocal FX Processor — Agent Instructions
 
-Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and there is an RP2040 benchmark target.
+Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and there is an RP2350 benchmark target (WeAct RP2350B Core).
 
 ## Skills
 
 | Skill | Path | When to Use |
 | :--- | :--- | :--- |
-| **vocal-fx-processor** | [SKILL.md](.agents/skills/vocal-fx-processor/SKILL.md) | Building, testing, modifying DSP stages, extending the desktop app or RP2040 firmware, adding presets/effects, debugging `DemonicEngine`. |
+| **vocal-fx-processor** | [SKILL.md](.agents/skills/vocal-fx-processor/SKILL.md) | Building, testing, modifying DSP stages, extending the desktop app or RP2350 firmware, adding presets/effects, debugging `DemonicEngine`. |
 
 ## Quick Reference
 
 - **Build desktop:** `.agents/skills/vocal-fx-processor/scripts/build_desktop.sh` (or `cmake -B build -S . && cmake --build build -j4`)
 - **Run tests:** `.agents/skills/vocal-fx-processor/scripts/build_tests.sh` (builds into `build-tests/` and runs `ctest`; only `engine_dsp_test` is built)
-- **Build Pico:** `.agents/skills/vocal-fx-processor/scripts/build_pico.sh` (first copy `$PICO_SDK_PATH/external/pico_sdk_import.cmake` into `pico/`)
+- **Build Pico:** `.agents/skills/vocal-fx-processor/scripts/build_pico.sh` (WeAct RP2350B Core by default; `PICO_BOARD=pico2` or `pico` to change). Hardware decisions: `docs/HARDWARE_PLAN.md`
 - **Human docs:** [README.md](README.md), [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)
 
 ## Rules

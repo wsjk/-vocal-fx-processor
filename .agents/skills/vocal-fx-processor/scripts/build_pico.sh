@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cross-compile the RP2040 Pico benchmark firmware.
+# Cross-compile the benchmark firmware (WeAct RP2350B Core by default; PICO_BOARD=pico2 or pico to change).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$SCRIPT_DIR/../..")"
 
@@ -24,8 +24,8 @@ if [ ! -d "$PICO_SDK_PATH" ]; then
     exit 1
 fi
 
-echo "==> Building RP2040 firmware..."
-cmake -S pico -B pico/build -DCMAKE_BUILD_TYPE=Release
+echo "==> Building benchmark firmware for ${PICO_BOARD:-weact_studio_rp2350b_core}..."
+cmake -S pico -B pico/build -DCMAKE_BUILD_TYPE=Release ${PICO_BOARD:+-DPICO_BOARD=$PICO_BOARD}
 cmake --build pico/build -j4
 
 echo "==> Firmware built: pico/build/vocal_pico_bench.uf2"

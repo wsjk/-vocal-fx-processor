@@ -3,12 +3,12 @@ name: vocal-fx-processor
 description: >-
   Development runbook for the Vocal FX Processor demonic vocal synthesis engine.
   Use when building, testing, modifying DSP stages, extending the desktop app
-  or RP2040 firmware, adding presets or effects, or debugging the DemonicEngine pipeline.
+  or RP2350 firmware, adding presets or effects, or debugging the DemonicEngine pipeline.
 ---
 
 # Vocal FX Processor Development Skill
 
-Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a pitch shifter, 10 numbered effect stages and a wet/dry mix, with true bypass. It runs in a desktop app (raylib + PortAudio), and there is an RP2040 benchmark target.
+Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a pitch shifter, 10 numbered effect stages and a wet/dry mix, with true bypass. It runs in a desktop app (raylib + PortAudio), and there is an RP2350 benchmark target (WeAct RP2350B Core).
 
 ---
 
@@ -42,13 +42,12 @@ g++ -std=c++17 -Iinclude tests/sim_controls_test.cpp src/demonic_engine.cpp -o s
 ```
 Expect `ALL TESTS PASSED (0 failures)` from each. `engine_dsp_test` and `sim_controls_test` are built. `engine_smoke_test.cpp` is out of date and does not compile.
 
-### 3. RP2040 Pico Benchmark Build
+### 3. RP2350 Benchmark Build (WeAct RP2350B Core)
 ```bash
-# One-time: the SDK import helper is not in the repo
-cp "$PICO_SDK_PATH/external/pico_sdk_import.cmake" pico/
 .agents/skills/vocal-fx-processor/scripts/build_pico.sh      # -> pico/build/vocal_pico_bench.uf2
+PICO_BOARD=pico .agents/skills/vocal-fx-processor/scripts/build_pico.sh   # original RP2040 Pico instead (fresh pico/build)
 ```
-The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `PICO_SDK_PATH` to `/Users/ww/src/pico-sdk`. Flash by holding BOOTSEL and copying the `.uf2`, then read the results with `screen /dev/tty.usbmodem* 115200`.
+The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `PICO_SDK_PATH` to `/Users/ww/src/pico-sdk`. `pico/CMakeLists.txt` defaults `PICO_BOARD` to `weact_studio_rp2350b_core` (Arm Cortex-M33 cores, FPU). Flash by holding BOOT and copying the `.uf2` to the `RP2350` drive (or use the `pico-hw-test` skill), then read the results with `screen /dev/tty.usbmodem* 115200`. Board choice, pin budget and parts: `docs/HARDWARE_PLAN.md`.
 
 ---
 
