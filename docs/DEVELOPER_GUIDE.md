@@ -25,7 +25,7 @@ Line numbers (`file:line`) refer to the code as it exists in the repository snap
 
 ## 1. Project at a glance
 
-**What it is.** A real-time vocal effects processor. A microphone signal goes in, passes through a chain of ten effect stages, and comes out of the speakers. The goal is a standalone guitar-pedal-style device built on a Raspberry Pi Pico (RP2040), with a desktop version that simulates the pedal's 128×64 OLED display so the effects can be developed on a laptop first.
+**What it is.** A real-time vocal effects processor. A microphone signal goes in, passes through a chain of ten effect stages, and comes out of the speakers. The goal is a standalone guitar-pedal-style device built on a Raspberry Pi Pico (RP2040), with a desktop version that simulates the whole pedal (enclosure, 128×64 OLED, encoders, footswitches) so the effects can be developed on a laptop first.
 
 **Technology**
 
@@ -33,7 +33,7 @@ Line numbers (`file:line`) refer to the code as it exists in the repository snap
 |---|---|
 | **C++17** | Language of everything. |
 | **PortAudio** | Cross-platform library for talking to the sound card. |
-| **raylib** | Small graphics library for the window, buttons and sliders. |
+| **raylib** | Small graphics library that draws the simulated pedal. |
 | **CMake** | Build tool — decides which files to compile and what to link together. |
 
 **File map**
@@ -47,17 +47,21 @@ vocal-fx-processor/
 ├── .agents/skills/             Agent runbook, reference notes and build scripts
 ├── include/
 │   ├── demonic_engine.hpp      The DSP engine's "interface": class + preset struct   [implemented]
+│   ├── sim_controls.hpp        Simulator: the 11 encoders as data (range, step, display, presets)
+│   ├── sim_layout.hpp          Simulator: enclosure geometry, hit-testing, mouse-drag knob turning
+│   ├── sim_font.hpp            Simulator: embedded DejaVu Sans Mono font (same as Phase Box)
 │   └── dsp_pipeline.hpp        EMPTY (0 bytes), not used by the build
 ├── src/
 │   ├── demonic_engine.cpp      The DSP engine's code: pitch shifter + the effect stages [implemented]
 │   └── dsp_pipeline.cpp        EMPTY (0 bytes), not used by the build
 ├── desktop/
-│   └── main_desktop.cpp        Desktop app: audio I/O, window, sliders, OLED mock   [implemented]
+│   └── main_desktop.cpp        Desktop app: audio I/O + the simulated pedal (raylib)  [implemented]
 ├── pico/
 │   ├── CMakeLists.txt          Separate build for the Raspberry Pi Pico (needs the Pico SDK)
 │   └── main_pico.cpp           Benchmark: how much real-time budget does the engine use on an RP2040?
 ├── tests/
 │   ├── engine_dsp_test.cpp     Measures output frequencies: pitch shifter, sub-octave, bypass   [built, in ctest]
+│   ├── sim_controls_test.cpp   Simulator layout and encoder logic, headless                     [built, in ctest]
 │   └── engine_smoke_test.cpp   OUT OF DATE: calls methods that no longer exist; not built (section 9)
 ├── portaudio/                  Vendored PortAudio source. Last-resort fallback only; listed in .gitignore
 └── .gitignore                  Ignores build/, build-tests/ and portaudio/
@@ -229,7 +233,7 @@ You will never need to do manual memory management here. The project **allocates
 
 ### 3.9 `std::atomic` — the mailbox between threads
 
-Python's Global Interpreter Lock quietly protects you from many threading hazards; C++ has no GIL. If one thread writes a float while another is reading it, the result is formally undefined. `std::atomic<float>` wraps a value so that each `.load()` and `.store()` is indivisible. In this project it is used as a *mailbox*: the UI thread drops in a slider value with `.store(x)`, and the audio thread reads it with `.load()`. See section 4.
+Python's Global Interpreter Lock quietly protects you from many threading hazards; C++ has no GIL. If one thread writes a float while another is reading it, the result is formally undefined. `std::atomic<float>` wraps a value so that each `.load()` and `.store()` is indivisible. In this project it is used as a *mailbox*: the UI thread drops in an encoder value with `.store(x)`, and the audio thread reads it with `.load()`. See section 4.
 
 ### 3.10 `main`, compiling, and linking
 
@@ -251,7 +255,7 @@ When the app runs there are two separate threads of execution:
 | Thread | Runs | Job | Rate |
 |---|---|---|---|
 | **Audio thread** | `audioCallback` (created and driven by PortAudio) | Reads the microphone block, runs the effects, writes the speaker block | Every 64 samples ≈ 700×/second |
-| **UI thread** | `main()`'s `while` loop | Reads keyboard/mouse, updates sliders, draws the window | 60×/second |
+| **UI thread** | `main()`'s `while` loop | Reads keyboard/mouse, turns encoders, presses footswitches, draws the pedal | 60×/second |
 
 They communicate **only** through a set of global `std::atomic` variables (the "mailbox").
 
@@ -259,16 +263,16 @@ They communicate **only** through a set of global `std::atomic` variables (the "
                          UI THREAD (main, 60 fps)
   keyboard / mouse ───►  ┌─────────────────────────────┐
                          │ handle P / F / B / Space,   │
-                         │ buttons, drag sliders       │
+                         │ footswitches, turn encoders │
                          └───────┬─────────────▲───────┘
                        .store()  │             │  .load()
                                  ▼             │
               ┌─────────────────────────┐  ┌───┴─────────────────────┐
-              │ guiDrive, guiSubBlend,  │  │ currentMicPeak          │
-              │ guiRobotBlend, …        │  │ scopeBuffer / scopeHead │
-              │ guiActivePreset         │  │ (for the OLED mock)     │
-              │ guiSpectralFreeze,      │  └───▲─────────────────────┘
-              │ guiBypass, guiPitch     │      │
+              │ guiParam[11] (encoders) │  │ currentMicPeak          │
+              │ guiActivePreset         │  │ scopeBuffer / scopeHead │
+              │ guiSpectralFreeze,      │  │ (for the OLED)          │
+              │ guiBypass               │  └───▲─────────────────────┘
+              │                         │      │
               └───────┬─────────────────┘      │ .store()
                       │ .load()                │
                       ▼                        │
@@ -278,12 +282,12 @@ They communicate **only** through a set of global `std::atomic` variables (the "
 
 ### 4.2 What happens in one audio block
 
-Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:35`), which:
+Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:43`), which:
 
-1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 43–48).
-2. Copies every slider value from the atomics into the engine via setters (lines 50–62). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
-3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 64–69).
-4. Copies the output into the oscilloscope ring buffer (lines 71–76) and publishes the mic peak (line 81).
+1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 52–57). This only updates the preset index the engine reports; the values themselves arrive through the encoder atomics in the next step (section 5.4).
+2. Copies every encoder value from the atomics into the engine via setters (lines 59–71). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
+3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 73–78).
+4. Copies the output into the oscilloscope ring buffer (lines 80–85) and publishes the mic peak (line 90).
 5. Returns `paContinue` ("keep going").
 
 ### 4.3 Design decisions worth knowing
@@ -291,24 +295,28 @@ Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:35`), which:
 - **The engine knows nothing about PortAudio or raylib.** `DemonicEngine` takes in a float array and fills a float array. That is why it can be tested headlessly (section 9) and is the part meant to be reused on the Pico.
 - **Everything is allocated up front.** No `new`, no `malloc`, no `std::vector` growth in the audio path — required for real-time safety and for microcontrollers.
 - **Control values are copied in once per block**, not per sample. Cheap, but it means parameter changes are "steppy" (see section 10.10).
-- **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE);`, `main_desktop.cpp:13`). Both threads can see it, but by convention only the audio thread should touch its state (the UI thread breaks this convention in two small places — section 10.7).
+- **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE);`, `main_desktop.cpp:22`). Both threads can see it, but by convention only the audio thread touches its state. The UI thread only calls `getPreset()` and `getPresetCount()`, which read data that never changes after construction.
 - **Memory footprint:** `sizeof(DemonicEngine)` is about **182 KB** (186,824 bytes measured), almost all of it the five buffers.
 
 ---
 
 ## 5. Walkthrough: the desktop app (`desktop/main_desktop.cpp`)
 
-### 5.1 Globals (lines 10–33)
+The app is split the way the Phase Box simulator is: pure logic in headers with no graphics dependency (unit-tested by `tests/sim_controls_test.cpp`), and all raylib drawing in `main_desktop.cpp`.
+
+| File | Contents |
+|---|---|
+| `include/sim_controls.hpp` | `simctl::Param` (one per encoder) and the `spec()` table: label, range, step per click, display format, bipolar or not, warning threshold, group (VOICE / MANGLE / SPACE). Helpers to map a value to its ring position and back (`norm`, `from_norm`), turn by clicks (`step`), format it (`format`), and read a preset's values (`preset_values`). |
+| `include/sim_layout.hpp` | `simlayout::Layout::make()`: where the enclosure, OLED, group panels, encoders, footswitches, LEDs and jacks are. Hit-testing and overlap helpers, `clicks_from_wheel`, and `KnobDrag` (turning a knob with the mouse: drag round the ring, or up/down from the centre). |
+| `include/sim_font.hpp` | DejaVu Sans Mono, embedded so text looks the same on every machine. |
+
+### 5.1 Globals (lines 22–32)
 
 ```cpp
-#define SAMPLE_RATE 44100
-#define FRAMES_PER_BUFFER 64
 DemonicEngine demonic(SAMPLE_RATE);
 
-std::atomic<bool>  guiBypass(false);     // true bypass: effects off, dry signal only
-std::atomic<float> guiPitch(0.0f);       // pitch shift in cents; 0 = shifter off
-std::atomic<float> guiDrive(11.0f);
-...
+std::atomic<bool>  guiBypass(false);        // true bypass: dry signal only, effects off
+std::atomic<float> guiParam[PARAM_COUNT];   // one per encoder, indexed by simctl::Param
 std::atomic<int>   guiActivePreset(0);
 std::atomic<bool>  guiSpectralFreeze(false);
 std::atomic<float> currentMicPeak(0.0f);
@@ -318,9 +326,11 @@ float scopeBuffer[SCOPE_SIZE] = {0};
 std::atomic<size_t> scopeHead(0);
 ```
 
-One atomic per control, initialised to the slider's default. The **scope buffer** is a 128-sample circular buffer the audio thread fills with output samples; the UI reads it to draw the waveform. `scopeHead` is how many samples have been written so far (it grows without bound; reads wrap it with `% SCOPE_SIZE`).
+One atomic per encoder, in an array indexed by `simctl::Param` (`guiParam[simctl::P_DRIVE]` and so on), so the drawing and input code can loop over all eleven. `main()` sets them from preset 0 (pitch 0) before audio starts. The **scope buffer** is a 128-sample circular buffer the audio thread fills with output samples; the UI reads it to draw the waveform. `scopeHead` is how many samples have been written so far (it grows without bound; reads wrap it with `% SCOPE_SIZE`).
 
-### 5.2 The audio callback (lines 35–83)
+**`selectPreset(idx)`** (line 36) runs on the UI thread: it copies the preset's values into the encoder atomics (pitch is not part of a preset and keeps its value), then stores the new index. Values first, index second, so the callback never sees the new preset with the old values.
+
+### 5.2 The audio callback (lines 43–92)
 
 The signature is dictated by PortAudio; you cannot change it. The parts you care about are `inputBuffer`, `outputBuffer`, and `framesPerBuffer`. The first thing it does is cast the generic `void*` buffers to `float*` (since the stream was opened with `paFloat32`):
 
@@ -331,30 +341,31 @@ float* out = static_cast<float*>(outputBuffer);
 
 The preset check uses a `static` local, `lastPreset`, which persists across calls so the callback can detect a *change*. Then every parameter is pushed into the engine, then the block is processed.
 
-### 5.3 `main()` setup (lines 85–106)
+### 5.3 `main()` setup (lines 275–309)
 
-1. `Pa_Initialize()` starts PortAudio.
-2. `Pa_OpenDefaultStream(&stream, 1, 1, paFloat32, SAMPLE_RATE, FRAMES_PER_BUFFER, audioCallback, nullptr)` — opens the default devices with **1 input channel, 1 output channel (mono), 32-bit float samples, 44.1 kHz, 64-frame blocks**, and registers `audioCallback`. (`&stream` passes the address of `stream` so the function can fill it in — an "output parameter".)
-3. `Pa_StartStream(stream)` — from here on, the callback is being called.
-4. `InitWindow(480, 668, ...)` creates the window; `SetTargetFPS(60)` limits the loop to 60 frames/second.
-5. `LoadRenderTexture(128, 64)` creates an off-screen 128×64 image — the fake OLED.
+1. Pitch to 0 and `selectPreset(0)`, so the encoders hold preset 0's values before the callback first reads them.
+2. `Pa_Initialize()` starts PortAudio.
+3. `Pa_OpenDefaultStream(&stream, 1, 1, paFloat32, SAMPLE_RATE, FRAMES_PER_BUFFER, audioCallback, nullptr)` — opens the default devices with **1 input channel, 1 output channel (mono), 32-bit float samples, 44.1 kHz, 64-frame blocks**, and registers `audioCallback`. (`&stream` passes the address of `stream` so the function can fill it in — an "output parameter".)
+4. `Pa_StartStream(stream)` — from here on, the callback is being called.
+5. `Layout::make()` computes the geometry; `InitWindow(970, 770, ...)` creates the window (high-DPI aware); the embedded font is loaded; `SetTargetFPS(60)` limits the loop to 60 frames/second.
+6. `LoadRenderTexture(128, 64)` creates an off-screen 128×64 image — the OLED.
 
 Error handling is by return code, not exceptions: functions return `paNoError` on success and `main` prints and exits otherwise.
 
-### 5.4 The UI loop (lines 108–245)
+### 5.4 The UI loop (lines 311–431)
 
 Each frame:
 
-1. **Keys:** `P` cycles `guiActivePreset`; `F` toggles `guiSpectralFreeze` (ignored while bypassed); `B` or `Space` toggles `guiBypass` (and clears `guiSpectralFreeze` when switching bypass on).
-2. **Snapshot:** reads every atomic into a local variable so the whole frame is drawn from one consistent set of values.
-3. **Draw the OLED** (lines 142–169) into the 128×64 off-screen texture: border, preset name, `[BYPASS]` or `[FREEZE ON]` when active, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to stay inside the display; grey while bypassed, red while frozen), and the mic-level bar.
-4. **Draw the window** (lines 171–244): scales the OLED texture up 2× and blits it (`DrawTexturePro`); draws the three buttons (preset, freeze, and the wide bypass button) with hit-testing by `CheckCollisionPointRec`; then draws the eleven sliders with the `drawSlider` lambda.
+1. **Keys:** `P` calls `selectPreset` with the next index; `F` toggles `guiSpectralFreeze` (ignored while bypassed); `B` or `Space` toggles `guiBypass` (and clears `guiSpectralFreeze` when switching bypass on). The footswitches call the same lambdas.
+2. **Mouse:** a press on an encoder starts a `KnobDrag`; while the button is held, the degrees turned move a 0..1 ring position (`drag_pos`) by `degrees / 270`, and `simctl::from_norm` turns that into the value stored in `guiParam`. Keeping `drag_pos` separately means PITCH's snap-to-zero does not trap the knob at 0. Scrolling over an encoder turns it by whole clicks (`simctl::step`, which lands on multiples of the step and stops at the ends). A press on a footswitch acts immediately.
+3. **OLED** (`render_oled`, line 248), drawn at its real 128×64 resolution into the off-screen texture: border, a header (preset number and name, or for 1.5 s after an encoder moves, that encoder's name and value), `BYPASS` or `FREEZE` under the header when active, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to the display; grey while bypassed, red while frozen), and the mic-level bar.
+4. **The pedal:** enclosure with screws and title, jacks and USB port (decorative), the OLED texture scaled 3× with its bezel, the three group panels, each encoder (`draw_encoder`: LED ring with the lit arc from `simctl::origin_degrees` to `simctl::degrees`, red past `warn_above`; a knurled cap that turns with the value; label and value under it), then the footswitch LEDs (preset flash, freeze red, bypass green while effects are on) and footswitches.
 
-This style is called **immediate-mode UI**: there are no button or slider objects. Every frame the code asks "is the mouse over this rectangle and pressed?", acts on the answer, and draws it. The `drawSlider` lambda (line 218) both draws the bar and — if the mouse is held down inside it — computes the new value from the mouse x-position and `.store()`s it to the atomic.
+This style is called **immediate-mode UI**: there are no button or knob objects. Every frame the code asks "is the mouse over this circle and pressed?", acts on the answer, and draws it. Only the geometry (`Layout`) and value logic (`simctl`) live outside the loop, which is what lets the tests check them without a window.
 
-### 5.5 Shutdown (lines 247–253)
+### 5.5 Shutdown (lines 433–440)
 
-Unload the texture, close the window, stop and close the audio stream, terminate PortAudio.
+Unload the texture and fonts, close the window, stop and close the audio stream, terminate PortAudio.
 
 ---
 
@@ -538,7 +549,7 @@ The Schmitt-trigger pattern (an "armed" flag and a threshold on each side) means
 
 2. **It does not click.** Switching mid-note would otherwise jump instantly between two different waveforms. Instead, `bypassBlend` slides linearly between 0 (effects) and 1 (dry) over 5 ms, and the final line of the sample loop blends the two. A linear ramp (not an exponential one) matters: it reaches exactly 1.0, so the exact pass-through above can take over cleanly.
 
-3. **It wipes the effects' memory once.** `resetState()` zeroes every buffer (echo, reverb, chorus, pitch, freeze) and every filter and detector variable, but not the *parameters*, so your slider settings are all still there when you switch back. Without this wipe, switching bypass off would replay up to half a second of audio from before the bypass. A useful side effect: **bypass is a panic button**. A runaway echo loop (Delay Feedback above 1.0, issue 10.2) is flushed by a single bypass cycle; the test confirms a loop that had reached 74× full scale is silent afterwards. It also clears any NaN or infinity stuck in the loop.
+3. **It wipes the effects' memory once.** `resetState()` zeroes every buffer (echo, reverb, chorus, pitch, freeze) and every filter and detector variable, but not the *parameters*, so your encoder settings are all still there when you switch back. Without this wipe, switching bypass off would replay up to half a second of audio from before the bypass. A useful side effect: **bypass is a panic button**. A runaway echo loop (Delay Feedback above 1.0, issue 10.2) is flushed by a single bypass cycle; the test confirms a loop that had reached 74× full scale is silent afterwards. It also clears any NaN or infinity stuck in the loop.
 
    The wipe happens once per bypass period (`bypassStateCleared`), not every block, so it costs nothing while bypassed.
 
@@ -592,7 +603,7 @@ cmake -S . -B build -DUSE_SYSTEM_RAYLIB=ON   # use Homebrew's raylib
 
 With CMake 4 or newer, raylib 5.0's own `CMakeLists.txt` may refuse to configure. The project sets `CMAKE_POLICY_VERSION_MINIMUM=3.5` for you, but if it still complains, pass `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` on the command line (the helper scripts in `.agents/skills/vocal-fx-processor/scripts/` do this).
 
-> **Verification status.** The full CMake build (engine, `engine_dsp_test`, and `vocal_desktop` with PortAudio and the downloaded raylib) has been built on macOS, and `engine_dsp_test` passes there. The engine and tests also build and pass on Linux with g++. The desktop app is untested on Linux and Windows.
+> **Verification status.** The full CMake build (engine, `engine_dsp_test`, `sim_controls_test`, and `vocal_desktop` with PortAudio and the downloaded raylib) has been built on macOS, and both tests pass there. The engine and tests also build and pass on Linux with g++. The desktop app is untested on Linux and Windows.
 
 The Raspberry Pi Pico build lives in a **separate** CMake project (`pico/CMakeLists.txt`) because it needs the Pico SDK and an ARM cross-compiler; see section 11.
 
@@ -624,19 +635,22 @@ void DemonicEngine::setTone(float c) { toneCoeff = c; }
 lowpassState = lowpassState + toneCoeff * (wet - lowpassState);
 ```
 
-**3. App — add the mailbox, copy it in, add a slider** (`desktop/main_desktop.cpp`):
+**3. Simulator — add an encoder** (`include/sim_controls.hpp`, `desktop/main_desktop.cpp`):
 
 ```cpp
-std::atomic<float> guiTone(0.35f);                         // with the other globals
+// sim_controls.hpp: add P_TONE to the Param enum (inside the group it belongs to), and a matching row to spec():
+{"TONE", "%.2f", 1.0f, 0.05f, 0.9f, 0.05f, false, INFINITY, G_VOICE},
 
-demonic.setTone(guiTone.load());                           // in audioCallback, with the other setters
+// main_desktop.cpp, in audioCallback with the other setters:
+demonic.setTone(guiParam[P_TONE].load());
 
-drawSlider("Tone", toneVal, 0.05f, 0.9f, guiTone);         // in the UI loop, plus: float toneVal = guiTone.load();
+// main(): give it a starting value next to the pitch one (or add it to presets, step 4):
+guiParam[simctl::P_TONE].store(0.35f);
 ```
 
-The window is 668 px tall (`screenHeight`, line 102) and each slider takes 34 px; the 11 existing sliders start at y = 258 and reach y ≈ 632, so a twelfth would just fit but leave no margin; make the window taller first.
+The encoder is drawn, hit-tested and turned automatically: `Layout::make()` spaces every group's encoders evenly across its panel. The VOICE panel has room for a fourth; MANGLE and SPACE already have four each, so a fifth there would need a wider window. Run `ctest`: `sim_controls_test` checks that nothing overlaps.
 
-**4. (Optional) add it to presets** — add a `float tone;` field to `VocalPreset`, extend the three brace-initialiser lines (the values must stay in the declared order), and copy it in `loadPreset`. **Note** that presets currently have no effect on the sound until issue 10.1 is fixed.
+**4. (Optional) add it to presets** — add a `float tone;` field to `VocalPreset`, extend the three brace-initialiser lines (the values must stay in the declared order), copy it in `loadPreset`, and set `out[P_TONE]` in `simctl::preset_values` so loading a preset turns the encoder.
 
 ### 8.2 Add a preset
 
@@ -648,7 +662,7 @@ The window is 668 px tall (`screenHeight`, line 102) and each slider takes 34 px
 1. Decide where it sits in the chain (order matters: effects before `tanh` get distorted; effects after it do not).
 2. Add any state it needs (a phase, a filter memory, a buffer) as private members and initialise them in the constructor, zeroing any arrays.
 3. Insert the code inside the `for` loop in `processBlock`, working on the `wet` variable.
-4. Expose its controls with setters, atomics and a slider as in 8.1.
+4. Expose its controls with setters and encoders as in 8.1.
 5. If it needs a buffer, remember: fixed size, wrap indexes with `%`, and watch your memory budget if the Pico is a target (section 11).
 
 **Real-time rules for anything you add:** no `new`/`delete`/`malloc`, no `std::vector` growth, no printing, no mutexes, no file access inside `processBlock` or the callback.
@@ -657,7 +671,7 @@ The window is 668 px tall (`screenHeight`, line 102) and each slider takes 34 px
 
 ## 9. Testing without a microphone
 
-Because `DemonicEngine` has no dependency on audio hardware, tests can drive it from a plain program: generate a signal, run it through `processBlock`, and analyse what comes out. The test program that is built and run is `engine_dsp_test.cpp`.
+Because `DemonicEngine` has no dependency on audio hardware, tests can drive it from a plain program: generate a signal, run it through `processBlock`, and analyse what comes out. Two test programs are built and run: `engine_dsp_test.cpp` (the sound) and `sim_controls_test.cpp` (the simulator's layout and encoder logic).
 
 ### Running it
 
@@ -673,6 +687,7 @@ ctest --test-dir build-tests --output-on-failure
 
 ```bash
 g++ -std=c++17 -O2 -Iinclude tests/engine_dsp_test.cpp src/demonic_engine.cpp -o dsp_test && ./dsp_test
+g++ -std=c++17 -Iinclude tests/sim_controls_test.cpp src/demonic_engine.cpp -o sim_test && ./sim_test
 ```
 
 It prints a `[PASS]`/`[FAIL]` line per check, ends with `ALL TESTS PASSED (0 failures)`, and exits non-zero on any failure (which is how `ctest` knows).
@@ -703,6 +718,10 @@ Measures **frequencies in the output**, plus bypass behaviour:
 
 **A trap when testing switches.** Blocks start at multiples of 64, so a test that flips a switch with `if (n == 44100)` will silently never fire (44,100 is not a multiple of 64) and the test will pass without testing anything. Use `block_has(n, t)`, which is true for the block that contains sample *t*. The bypass tests originally had exactly this bug, and it was caught only because one of them failed.
 
+### `sim_controls_test.cpp`: does the pedal hold together?
+
+Checks the simulator without opening a window: the enclosure fits the window; the OLED is 128×64 at 3×; panels, encoders (with their labels), footswitches, LEDs and jacks sit where they should without overlapping; a click lands on exactly one control; every encoder's value maps to its ring and back, stops at its ends and steps as documented (one semitone for PITCH, which also snaps to 0 near the centre); values format as shown on screen; every preset value fits its encoder's range and loading a preset keeps the pitch; and `KnobDrag` turns the right way.
+
 **Writing your own.** Use the helpers: `isolate(engine)` turns every optional effect off so only the one under test is audible; `render(engine, generator, seconds, keepSeconds)` feeds a signal in 64-sample blocks (the desktop app's block size) and returns the last part of the output; then assert on `magnitude_at` or `dominant_freq`.
 
 **Ideas for further tests:** assert that peak output stays ≤ 1.0 once a limiter is added (issue 10.2); that Delay Feedback of 1.05 stays bounded over 60 seconds; that the wavefolder stays within ±1 (issue 10.4); render an impulse and check echo positions (issue 10.5); write the output to a WAV file and listen to it.
@@ -711,37 +730,19 @@ Measures **frequencies in the output**, plus bypass behaviour:
 
 ## 10. Code review: known issues
 
-> **Status update.** Since the original review, issue **10.3** (no pitch shifting), issue **10.6** (unreliable sub-octave) and most of **10.8** (build portability) have been resolved; they are kept below, marked **RESOLVED**, as a record of what changed and why. Issues **10.1, 10.2, 10.4, 10.5, 10.7, 10.9** and the minor items in 10.10 are still open.
+> **Status update.** Since the original review, issue **10.3** (no pitch shifting), issue **10.6** (unreliable sub-octave) and most of **10.8** (build portability) have been resolved; they are kept below, marked **RESOLVED**, as a record of what changed and why. Issue **10.1** (presets) was resolved with the pedal-style simulator. Issues **10.2, 10.4, 10.5, 10.7, 10.9** and the minor items in 10.10 are still open.
 
 Findings are ordered roughly by impact. Items marked **[measured]** were confirmed by compiling `DemonicEngine` on its own and feeding it synthetic test signals (sine waves and impulses) — they are facts about the code, though real voices will vary in degree. Items marked **[by inspection]** come from reading the code.
 
-### 10.1 Presets are immediately overwritten by the sliders — *high* **[measured]**
+### 10.1 Presets were immediately overwritten by the sliders — **RESOLVED**
 
-`main_desktop.cpp:43–62`. When the preset changes, `loadPreset()` copies the preset into the engine — and then, a few lines later in the same callback, all ten `set…()` calls overwrite those values with the slider atomics. Net effect: **the preset only changes the name.** (The atomics' defaults also don't match preset 0 — e.g. `guiRobotFreq` is 55 but DEMONIC GROWL says 45, `guiWavefold` is 1.5 vs 1.0.)
+When the preset changed, `loadPreset()` copied the preset into the engine, and then, a few lines later in the same callback, all ten `set…()` calls overwrote those values with the slider atomics. Net effect: the preset only changed the name. (The atomics' defaults did not match preset 0 either.)
 
-*Suggested fix:* when a preset is chosen, write the preset's values *into the GUI atomics* (UI thread) so the sliders jump to them and the callback applies them as usual. Add an accessor to the engine:
-
-```cpp
-// engine
-const VocalPreset& getPreset(int i) const { return presets[i % NUM_PRESETS]; }
-
-// main_desktop.cpp
-void selectPreset(int idx) {
-    const VocalPreset& p = demonic.getPreset(idx);
-    guiDrive.store(p.driveDb);          guiSubBlend.store(p.subBlend);
-    guiRobotBlend.store(p.robotBlend);  guiRobotFreq.store(p.robotFreq);
-    guiWavefold.store(p.wavefoldDrive); guiDecimation.store(p.decimationFactor);
-    guiDelayFB.store(p.delayFeedback);  guiDelayMix.store(p.delayMix);
-    guiReverb.store(p.reverbMix);       guiMix.store(p.wetDryMix);
-    guiActivePreset.store(idx);
-}
-```
-
-Call `selectPreset` from the `P` key and the preset button, and once at startup (so initial values match preset 0).
+**Now:** the engine has `getPreset(i)`, and the UI thread's `selectPreset(i)` writes the preset's values into the encoder atomics before publishing the index, so the encoders turn to the preset and the callback applies them as usual (section 5.1). The app starts with `selectPreset(0)`, so the starting values are preset 0's. Pitch is still not part of presets.
 
 ### 10.2 Delay feedback above 1.0 grows without limit, and nothing limits the output — *high* **[measured]**
 
-`demonic_engine.cpp:273`. The slider allows feedback up to 1.05. With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
+`demonic_engine.cpp:273`. The DELAY FB encoder allows feedback up to 1.05 (its ring turns red above 1.0). With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
 
 *Mitigation already available:* pressing **Bypass** flushes the loop (section 6.9), so a runaway can be silenced with one keypress. It is a workaround, not a fix: the loop can still run away again.
 
@@ -755,7 +756,7 @@ output[i] = std::clamp(output[i], -1.0f, 1.0f);   // or a soft limiter
 
 ### 10.3 `setFormantShift` and `formantCents` did nothing — **RESOLVED**
 
-The engine stored a "formant shift" value that no code ever read, and the display's `PTCH:` label implied pitch shifting that did not exist. **Now:** `setPitchShift(cents)` drives a real pitch shifter (section 6.7), surfaced as the **Pitch** slider in the desktop app; `setFormantShift` remains as an alias that forwards to it. Note that the shifter moves pitch and spectral shape together, so it is a pitch shifter, not a formant shifter (hence the rename). The on-screen `PTCH:` label is still only a preset-name label.
+The engine stored a "formant shift" value that no code ever read, and the display's `PTCH:` label implied pitch shifting that did not exist. **Now:** `setPitchShift(cents)` drives a real pitch shifter (section 6.7), surfaced as the **PITCH** encoder in the desktop app; `setFormantShift` remains as an alias that forwards to it. Note that the shifter moves pitch and spectral shape together, so it is a pitch shifter, not a formant shifter (hence the rename). The `PTCH:` label is gone: the OLED now shows the preset name, or the value of the encoder being turned.
 
 ### 10.4 The wavefolder escapes the ±1 range — *high* **[measured]**
 
@@ -799,10 +800,9 @@ The original toggled on both zero-crossing directions (same frequency as the inp
 
 ### 10.7 Cross-thread data not protected — *low* **[by inspection]**
 
-- `main_desktop.cpp:146,192` call `demonic.getCurrentPresetName()` from the UI thread while the audio thread may be changing `currentPresetIndex` (a plain `int`).
 - `scopeBuffer` (a plain `float` array) is written by the audio thread and read by the UI thread with no synchronisation.
 
-In practice both "work" on common hardware (a stale preset name or a slightly torn waveform), but formally they are data races. *Fix:* make `currentPresetIndex` an `std::atomic<int>`, or have the UI look up the name from `guiActivePreset` through a static name table; accept or lock-free-queue the scope data.
+In practice this "works" on common hardware (at worst a slightly torn waveform), but formally it is a data race. *Fix:* accept it, or pass the scope data through a lock-free queue. (The UI used to read the preset name through `getCurrentPresetName()` while the audio thread changed the index; it now looks the name up with `getPreset(guiActivePreset)`, which reads constant data.)
 
 ### 10.8 Build portability — mostly **RESOLVED**
 
@@ -818,9 +818,8 @@ Freeze captures the *oldest* 4,096 samples in the 500 ms echo buffer (audio from
 
 ### 10.10 Minor items
 
-- **No parameter smoothing.** Setter values are applied once per 64-sample block and take effect instantly, so fast slider moves can produce small clicks ("zipper noise"). Smooth each parameter per-sample with a one-pole filter.
+- **No parameter smoothing.** Setter values are applied once per 64-sample block and take effect instantly, so fast encoder moves can produce small clicks ("zipper noise"). Smooth each parameter per-sample with a one-pole filter.
 - **Integer overflow.** `decimationCounter++` (`int`) will overflow after about 13.5 hours of continuous running (signed overflow is undefined behaviour in C++). Wrap it: `decimationCounter = (decimationCounter + 1) % decimationStep`.
-- **Initial slider defaults** don't equal preset 0 (see 10.1). The Pitch slider is not part of presets.
 - **The noise gate has no hysteresis or release**, so quiet speech near the threshold chatters on and off.
 - **Mono only**, hard-wired to the default devices; no device selection or error recovery if a device disappears.
 - **Empty files** `dsp_pipeline.hpp/.cpp` are placeholders that nothing uses. Delete them or fill them in so newcomers aren't misled.
@@ -857,8 +856,8 @@ It repeats a table of results every few seconds covering: a baseline with option
 - **Already done:** `M_PI` is a 64-bit `double`, so expressions such as `2.0f * M_PI * …` silently forced slow double-precision maths. The engine now uses a `float` constant (`kTwoPi`) instead.
 - **Candidate optimisations**, in rough order of expected payoff (measure after each change): replace the two per-sample `sin` calls with lookup tables or a recurrence oscillator; replace `tanh` with a cheap polynomial or lookup table; use a lookup table for the pitch crossfade `cos`; drop to a 22.05 kHz sample rate (halves the per-second work); use the second core for part of the chain; move hot paths to fixed-point integer arithmetic. The Pico SDK also ships optimised software float routines, which the benchmark already benefits from.
 - **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB, 69 % of the 264 KB RAM)**, before the SDK's own needs, stacks, and audio I/O buffers. It must be a global or static object (`main_pico.cpp` does this), never a local variable. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
-- **I/O still to design.** An ADC or I²S codec for audio in and out, an SSD1306-style 128×64 OLED (the desktop mock is already that size), and buttons or pots mapped to the same controls the GUI atomics represent.
-- **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine`, read controls from pots and buttons, and call `processBlock` from a DMA or I²S interrupt, the same shape as the desktop app.
+- **I/O still to design.** An ADC or I²S codec for audio in and out, an SSD1306-style 128×64 OLED (the simulator's is already that size), and the simulator's controls: eleven encoders and three footswitches. The simulated enclosure is a proposal, not a finished hardware design; encoders (not pots) were chosen so that presets can move them.
+- **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine`, read controls from encoders and footswitches, and call `processBlock` from a DMA or I²S interrupt, the same shape as the desktop app.
 
 ---
 

@@ -50,6 +50,8 @@ public:
     void loadPreset(int index);
     const char* getCurrentPresetName() const;
     int getPresetCount() const;
+    // Preset data (read-only, never changes after construction), so the UI can move its controls to a preset.
+    const VocalPreset& getPreset(int index) const { return presets[((index % NUM_PRESETS) + NUM_PRESETS) % NUM_PRESETS]; }
 
 private:
     float sampleRate;

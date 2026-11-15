@@ -62,16 +62,16 @@ There is **no** output limiter and **no** saturation in the echo loop.
 ```
 UI Thread (raylib loop, 60 fps)      Audio Thread (PortAudio callback, 64 frames)
 ───────────────────────────          ───────────────────────────────────────────
-guiActivePreset.store(i) ─atomic──►  loadPreset(i) on change (static lastPreset)
+selectPreset(i): guiParam[] then guiActivePreset ─atomic──►  loadPreset(i) on change (index only)
 guiBypass.store(b)       ─atomic──►  demonic.setBypass(...)        ← first
-guiPitch / guiDrive / …  ─atomic──►  demonic.setPitchShift(...) … setMix(...)
+guiParam[P_PITCH … P_MIX] ─atomic──► demonic.setPitchShift(...) … setMix(...)
 guiSpectralFreeze        ─atomic──►  demonic.setSpectralFreeze(...) ← last
                                      demonic.processBlock(in, out, 64)
                          ◄─atomic──  currentMicPeak.store(peak)
                          ◄─atomic──  scopeHead (scopeBuffer[] itself is a plain array)
 ```
 
-There are no mutexes. Two known benign races exist: `scopeBuffer[]`, and the UI calling `demonic.getCurrentPresetName()`, which reads `currentPresetIndex` (a plain `int`).
+There are no mutexes. One known benign race exists: `scopeBuffer[]`. The UI reads preset data only through `getPreset()`, which is constant after construction.
 
 ## Presets (3 built-in; constructor of `DemonicEngine`)
 
@@ -81,4 +81,4 @@ There are no mutexes. Two known benign races exist: `scopeBuffer[]`, and the UI 
 | 1 | MEGATRON | 6 | 0.20 | 0.95 | 75 | 3.0 | 3.5 | 0.40 | 0.20 | 0.20 | 0.90 |
 | 2 | CYBER DEMON | 10 | 0.70 | 0.65 | 55 | 2.5 | 2.0 | 0.75 | 0.40 | 0.50 | 0.85 |
 
-Presets do not include pitch. In the desktop app they currently change only the name, because of issue 10.1.
+Presets do not include pitch. In the desktop app, loading one turns the encoders to its values (`selectPreset`).
