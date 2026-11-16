@@ -109,6 +109,8 @@ static void test_encoder_steps() {
     check(near(step(P_DRIVE, 12.0f, 5), 12.0f) && near(step(P_DRIVE, 0.0f, -3), 0.0f), "encoders stop at the ends");
     check(near(step(P_DELAY_FB, 1.0f, 2), 1.05f), "delay feedback reaches its 1.05 maximum");
     check(near(step(P_RATE, 10.0f, 2), 20.0f), "clank rate moves 5 Hz per click");
+    check(near(step(P_ECHO_TIME, 0.2f, 1), 0.22f) && near(step(P_ECHO_TIME, 2.0f, 3), 2.0f),
+          "echo time moves 20 ms per click and stops at 2 s");
 }
 
 static void test_format() {
@@ -120,6 +122,10 @@ static void test_format() {
     format(P_DELAY_FB, 1.05f, buf, sizeof buf);
     check(std::strcmp(buf, "105.0%") == 0, "feedback shows above 100%% (%s)", buf);
     check(spec(P_DELAY_FB).warn_above == 1.0f, "feedback above 1.0 is flagged (runaway echo)");
+    format(P_ECHO_TIME, 0.2f, buf, sizeof buf);
+    check(std::strcmp(buf, "200 ms") == 0, "echo time shows milliseconds (%s)", buf);
+    check(spec(P_ECHO_TIME).min == DemonicEngine::kMinDelayTime && spec(P_ECHO_TIME).max == DemonicEngine::kMaxDelayTime,
+          "echo time range matches the engine's");
 }
 
 static void test_presets_move_the_encoders() {
@@ -130,7 +136,7 @@ static void test_presets_move_the_encoders() {
     const VocalPreset& p = e.getPreset(1);
     check(v[P_PITCH] == -300.0f, "loading a preset keeps the pitch");
     check(v[P_DRIVE] == p.driveDb && v[P_ROBOT] == p.robotBlend && v[P_DECIM] == p.decimationFactor &&
-          v[P_MIX] == p.wetDryMix, "loading a preset sets the other encoders to its values");
+          v[P_MIX] == p.wetDryMix && v[P_ECHO_TIME] == p.delayTime, "loading a preset sets the other encoders to its values");
     bool in_range = true;
     for (int i = 0; i < e.getPresetCount(); ++i) {
         preset_values(e.getPreset(i), 0.0f, v);

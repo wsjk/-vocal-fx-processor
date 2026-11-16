@@ -1,5 +1,5 @@
 // Desktop simulator of the Demonic vocal pedal: PortAudio runs the engine on the microphone, raylib draws the pedal
-// enclosure (OLED, eleven encoders, three footswitches, jacks) and turns mouse and keyboard input into control
+// enclosure (OLED, twelve encoders, three footswitches, jacks) and turns mouse and keyboard input into control
 // changes. The audio and UI threads talk only through std::atomic values.
 #include <algorithm>
 #include <atomic>
@@ -65,6 +65,7 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     demonic.setRobotFreq(guiParam[P_RATE].load());
     demonic.setWavefold(guiParam[P_FOLD].load());
     demonic.setDecimation(guiParam[P_DECIM].load());
+    demonic.setDelayTime(guiParam[P_ECHO_TIME].load());
     demonic.setDelayFeedback(guiParam[P_DELAY_FB].load());
     demonic.setDelayMix(guiParam[P_DELAY_MIX].load());
     demonic.setReverbMix(guiParam[P_REVERB].load());
