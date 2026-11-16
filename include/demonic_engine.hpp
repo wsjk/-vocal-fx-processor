@@ -147,7 +147,7 @@ private:
     float ringModPhase;
 
     float heldSample;
-    int decimationCounter;
+    float decimationPhase; // < 0 while holding; a new sample is taken when it reaches 0 (counts 44.1 kHz samples)
     float inputEnvelope;
 
     // Pitch shifter: two crossfaded, sweeping delay taps

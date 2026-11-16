@@ -13,7 +13,6 @@ None.
 
 ### 10.10 Minor
 - Parameters are applied per block with no smoothing, which causes zipper noise.
-- The `int` `decimationCounter++` overflows after about 13.5 h. Wrap it modulo `decimationStep`.
 - The noise gate has no hysteresis or release.
 - Audio is mono only, on the default devices.
 - `dsp_pipeline.*` are empty.

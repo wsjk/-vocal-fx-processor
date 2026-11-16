@@ -53,7 +53,7 @@ DemonicEngine::DemonicEngine(float sr, DemonicEngineMemory& memory)
       reverbMix(0.35f), spectralFreezeActive(false), currentPresetIndex(0),
       subDetLP1(0.0f), subDetLP2(0.0f), subDetEnv(0.0f), subArmed(false), subToggle(false), subFilterState(0.0f),
       dcInPrev(0.0f), dcOutPrev(0.0f), lowpassState(0.0f), ringModPhase(0.0f),
-      heldSample(0.0f), decimationCounter(0), inputEnvelope(0.0f),
+      heldSample(0.0f), decimationPhase(0.0f), inputEnvelope(0.0f),
       pitchWriteHead(0), pitchPhase(0.0f), pitchBlend(0.0f), harmonyPhase(0.0f), harmonyLevel(0.0f),
       delayWriteHead(0), lfoChorusPhase(0.0f), feedbackDelayWriteHead(0), echoDelaySamples(0.0f),
       freezeWriteHead(0), freezeStart(0), freezePos(0), reverbOk(false),
@@ -123,7 +123,7 @@ void DemonicEngine::resetState() {
     pitchWriteHead = 0; pitchPhase = 0.0f; pitchBlend = 0.0f; harmonyPhase = 0.0f; harmonyLevel = 0.0f;
     subDetLP1 = subDetLP2 = subDetEnv = 0.0f; subArmed = false; subToggle = false; subFilterState = 0.0f;
     dcInPrev = dcOutPrev = lowpassState = ringModPhase = heldSample = 0.0f;
-    decimationCounter = 0; inputEnvelope = 0.0f;
+    decimationPhase = 0.0f; inputEnvelope = 0.0f;
     delayWriteHead = 0; lfoChorusPhase = 0.0f; feedbackDelayWriteHead = 0;
     echoDelaySamples = std::clamp(delayTime * sampleRate, 1.0f, static_cast<float>(echoLen - 2));
     freezeWriteHead = 0; freezeStart = 0; freezePos = 0;
@@ -213,6 +213,7 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
     float gainMultiplier = std::pow(10.0f, driveDb / 20.0f);
     const float noiseGateThreshold = 0.02f;
     int decimationStep = std::max(1, static_cast<int>(decimationFactor));
+    const float decimationAdvance = kRefRate / sampleRate;   // 44.1 kHz samples per sample
     const float pitchRatio = std::pow(2.0f, pitchCents / 1200.0f);   // 100 cents = 1 semitone
     const bool pitchActive = std::abs(pitchCents) >= 1.0f;
     const float pitchBlendTarget = pitchActive ? 1.0f : 0.0f;
@@ -318,12 +319,16 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
             wet = wet * (1.0f - k) + folded * k;
         }
 
-        // 5. Decimation
-        if (decimationCounter++ % decimationStep == 0) {
+        // 5. Decimation: hold one sample per `decimationStep` samples *at 44.1 kHz*, so the crunch is the
+        //    same at any rate. decimationPhase counts 44.1 kHz samples (kRefRate / sampleRate per sample;
+        //    exactly 1 at 44.1 kHz) and takes a new sample each time it reaches 0.
+        if (decimationPhase >= 0.0f) {
             heldSample = wet;
+            decimationPhase -= static_cast<float>(decimationStep);
         } else {
             wet = heldSample;
         }
+        decimationPhase += decimationAdvance;
 
         const float quantizationLevels = 32.0f; 
         wet = std::round(wet * quantizationLevels) / quantizationLevels;
