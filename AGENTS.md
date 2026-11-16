@@ -12,6 +12,7 @@ Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch 
 
 - **Build desktop:** `.agents/skills/vocal-fx-processor/scripts/build_desktop.sh` (or `cmake -B build -S . && cmake --build build -j4`)
 - **Run tests:** `.agents/skills/vocal-fx-processor/scripts/build_tests.sh` (builds into `build-tests/` and runs `ctest`: `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test`)
+- **Build Daisy:** `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh` (benchmark for the Daisy Seed, the planned board; needs libDaisy at `/Users/ww/src/libDaisy` or `LIBDAISY_DIR`; `program-dfu` to flash)
 - **Build Pico:** `.agents/skills/vocal-fx-processor/scripts/build_pico.sh` (WeAct RP2350B Core by default; `PICO_BOARD=pico2` or `pico` to change). Hardware decisions: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp`
 - **Human docs:** [README.md](README.md) and every file in [docs/](docs/) ([USER_GUIDE.md](docs/USER_GUIDE.md), [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md))
 

@@ -20,7 +20,7 @@ Why it replaced the RP2350B:
 - **Speed.** About 3× the clock of one RP2350 core, so the engine has much more headroom.
 - **Less to build.** No codec board, no I²C codec setup, no PIO I²S, no master-clock trick.
 
-What it costs: the Daisy has one core (audio and controls share it, §3), no PIO (the WS2812 chain uses SPI, §4), and 31 GPIO, which the panel uses almost entirely (§4). The `pico/` benchmark (`vocal_pico_bench`, built for `weact_studio_rp2350b_core`) stays in the repo until the Daisy port replaces it.
+What it costs: the Daisy has one core (audio and controls share it, §3), no PIO (the WS2812 chain uses SPI, §4), and 31 GPIO, which the panel uses almost entirely (§4). The benchmark has a Daisy build (`daisy/`); the RP2350 build (`pico/`, for `weact_studio_rp2350b_core`) stays in the repo, sharing the same scenarios (`include/engine_bench.hpp`).
 
 ## 2. Audio design
 
@@ -90,7 +90,7 @@ No prices are given here beyond the board's; check live listings before ordering
 
 ## 6. Next steps
 
-1. **Port the benchmark** (go / no-go). Rebuild `pico/main_pico.cpp`'s benchmark on libDaisy: run the engine at 48 kHz on synthetic input, time `processBlock` with the Cortex-M7 cycle counter, and print the share of the 1,333 µs budget over USB serial. Flash it over DFU (hold BOOT, press RESET). Results go into Developer Guide §11.
+1. **Run the benchmark** (go / no-go). `daisy/main_daisy.cpp` runs the engine at 48 kHz on synthetic input, times `processBlock` with libDaisy's microsecond timer, and prints the share of the 1,333 µs budget over USB serial. Build and flash it with `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh program-dfu` (Seed in DFU mode: hold BOOT, press RESET), then open the serial port. Results go into Developer Guide §11.
 2. **If it is too slow**, work through the optimisations in Developer Guide §11 ("Things to expect"), measuring after each one.
 3. **Audio pass-through.** Preamp into the Daisy's input, the callback copying input to output, and a clean mic signal straight through (no engine yet).
 4. **Engine in the callback.** Call `processBlock` from the audio callback; measure the block time against the deadline.

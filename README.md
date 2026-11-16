@@ -150,6 +150,10 @@ ctest --test-dir build-tests --output-on-failure
 
 ---
 
+## Daisy Seed
+
+`daisy/` cross-compiles the same **benchmark** for the Electrosmith Daisy Seed, the planned board, with [libDaisy](https://github.com/electro-smith/libDaisy). It reports how much of the 1,333 µs budget (64 samples at 48 kHz) each block uses. Setup, build and flashing instructions are in the header of [`daisy/Makefile`](daisy/Makefile); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) has the board, pins and parts. It has not yet been run on hardware.
+
 ## Raspberry Pi Pico
 
 `pico/` is a separate CMake project that cross-compiles a **benchmark**. It runs the engine on synthetic input and reports, over USB serial, how much of the 1,451 µs real-time budget each 64-sample block uses. It builds for the **WeAct RP2350B Core** (RP2350B: Cortex-M33 with FPU, 520 KB RAM, 48 GPIO); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) explains the choice, the WM8731 audio design and the pin map, and lists what to buy. Setup, build and flashing instructions are in the header of [`pico/CMakeLists.txt`](pico/CMakeLists.txt) and in [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico). The benchmark has not yet been run on hardware.
@@ -172,6 +176,7 @@ vocal-fx-processor/
 │   ├── sim_controls.hpp        Simulator encoders: ranges, steps, display, preset values
 │   ├── sim_layout.hpp          Simulator enclosure geometry, hit-testing, knob dragging
 │   ├── hw_pinout.hpp           Planned hardware pin map (Daisy Seed)
+│   ├── engine_bench.hpp        Benchmark scenarios and timing loop, shared by daisy/ and pico/
 │   ├── sim_font.hpp            Embedded DejaVu Sans Mono for the simulator
 │   └── dsp_pipeline.hpp        Empty placeholder (not used)
 ├── src/
@@ -184,6 +189,9 @@ vocal-fx-processor/
 │   ├── sim_controls_test.cpp   Simulator layout and encoder tests (registered with ctest)
 │   ├── hw_pinout_test.cpp      Planned pin map checks (registered with ctest)
 │   └── engine_smoke_test.cpp   Out of date; not built
+├── daisy/
+│   ├── Makefile                Separate libDaisy build (setup notes in its header)
+│   └── main_daisy.cpp          Daisy Seed real-time budget benchmark
 ├── pico/
 │   ├── CMakeLists.txt          Separate Pico SDK project (setup notes in its header)
 │   └── main_pico.cpp           RP2350 real-time budget benchmark
