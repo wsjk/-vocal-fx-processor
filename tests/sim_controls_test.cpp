@@ -1,14 +1,15 @@
 // Headless tests for the simulator's enclosure layout and encoder logic (include/sim_layout.hpp,
 // include/sim_controls.hpp). No window, raylib or PortAudio needed.
 //
-//   g++ -std=c++17 -Iinclude tests/sim_controls_test.cpp src/demonic_engine.cpp -o sim_test && ./sim_test
-#include "demonic_engine.hpp"
+//   Build & run with CMake: .agents/skills/vocal-fx-processor/scripts/build_tests.sh
+#include "test_engine.hpp"
 #include "sim_controls.hpp"
 #include "sim_layout.hpp"
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 
 using namespace simctl;
 using namespace simlayout;
@@ -122,7 +123,8 @@ static void test_format() {
 }
 
 static void test_presets_move_the_encoders() {
-    DemonicEngine e(44100.0f);
+    auto rig = std::make_unique<TestEngine>(44100.0);
+    DemonicEngine& e = rig->engine;
     float v[PARAM_COUNT];
     preset_values(e.getPreset(1), -300.0f, v);
     const VocalPreset& p = e.getPreset(1);

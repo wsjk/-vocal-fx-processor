@@ -19,7 +19,8 @@ using simctl::PARAM_COUNT;
 using simlayout::Circle;
 using simlayout::Layout;
 
-DemonicEngine demonic(SAMPLE_RATE);
+DemonicEngineMemory engineMemory;                  // the engine's long buffers (~576 KB)
+DemonicEngine demonic(SAMPLE_RATE, engineMemory);
 
 std::atomic<bool>  guiBypass(false);        // true bypass: dry signal only, effects off
 std::atomic<float> guiParam[PARAM_COUNT];   // one per encoder, indexed by simctl::Param (set by selectPreset)

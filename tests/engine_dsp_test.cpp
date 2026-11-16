@@ -1,13 +1,14 @@
 // DSP behaviour tests for DemonicEngine: does the pitch shifter land on the right note, and does the
 // sub-octave really sit one octave below the voice? No microphone, window, or PortAudio needed.
 //
-// Build & run from the repo root (or use CMake: `ctest`):
-//   g++ -std=c++17 -Iinclude tests/engine_dsp_test.cpp src/demonic_engine.cpp -o dsp_test && ./dsp_test
-#include "demonic_engine.hpp"
+// Build & run with CMake (it fetches DaisySP's ReverbSc, which the engine needs):
+//   .agents/skills/vocal-fx-processor/scripts/build_tests.sh
+#include "test_engine.hpp"
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 static const double kFs = 44100.0;
@@ -84,7 +85,7 @@ static void test_pitch_shift() {
     const double inF = 220.0;
     const float cents[] = {-1200, -700, -500, -100, 0, 100, 500, 700, 1200};
     for (float c : cents) {
-        DemonicEngine e(static_cast<float>(kFs));
+        auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
         isolate(e);
         e.setPitchShift(c);
         auto out = render(e, [&](size_t n) { return 0.5f * std::sin(2.0 * kPi * inF * n / kFs); }, 2.5, 1.0);
@@ -101,7 +102,7 @@ static void test_pitch_shift_voice_like() {
     const double f0 = 150.0;
     const float cents[] = {-700, -500, -200, 300, 700};
     for (float c : cents) {
-        DemonicEngine e(static_cast<float>(kFs));
+        auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
         isolate(e);
         e.setPitchShift(c);
         Noise noise;
@@ -128,7 +129,7 @@ static void test_pitch_shift_voice_like() {
 
 static void test_pitch_shift_is_bounded_and_clickless() {
     std::printf("\n-- Pitch shifter: switching on/off mid-note must not blow up or click --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     isolate(e);
     std::vector<float> in(kBlock), out(kBlock);
     float peak = 0, maxJump = 0, prev = 0;
@@ -159,7 +160,7 @@ static void test_sub_octave() {
     for (double f : freqs) {
         for (float a : amps) {
             auto run = [&](float subBlend) {
-                DemonicEngine e(static_cast<float>(kFs));
+                auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
                 isolate(e);
                 e.setSubOctaveBlend(subBlend);
                 return render(e, [&](size_t n) { return a * std::sin(2.0 * kPi * f * n / kFs); }, 2.0, 1.0);
@@ -176,7 +177,7 @@ static void test_sub_octave_voice_like() {
     std::printf("\n-- Sub-octave: harmonic-rich 'voice' with a little noise --\n");
     const double f0 = 150.0;
     auto run = [&](float subBlend) {
-        DemonicEngine e(static_cast<float>(kFs));
+        auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
         isolate(e);
         e.setSubOctaveBlend(subBlend);
         Noise noise;                            // fresh, identical noise for the on and off runs
@@ -195,7 +196,7 @@ static void test_sub_octave_voice_like() {
 
 static void test_sub_silent_on_silence() {
     std::printf("\n-- Sub-octave: silence in, silence out --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     isolate(e); e.setSubOctaveBlend(1.0f);
     auto out = render(e, [](size_t) { return 0.0f; }, 1.0, 1.0);
     float peak = 0; for (float s : out) peak = std::fmax(peak, std::fabs(s));
@@ -231,7 +232,7 @@ static void extreme_settings(DemonicEngine& e) {      // everything on, everythi
 
 static void test_bypass_is_exact() {
     std::printf("\n-- Bypass: output is an exact copy of the input --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     extreme_settings(e);
     Noise noise;
     std::vector<float> ins, outs;
@@ -252,7 +253,7 @@ static void test_bypass_is_exact() {
 
 static void test_bypass_no_click() {
     std::printf("\n-- Bypass: switching on and off does not click --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     isolate(e);
     e.setDrive(6); e.setSubOctaveBlend(0.5f); e.setDelayMix(0.3f); e.setReverbMix(0.3f); e.setMix(0.85f);
     std::vector<float> ins, outs;
@@ -271,7 +272,7 @@ static void test_bypass_no_click() {
 
 static void test_bypass_clears_tails() {
     std::printf("\n-- Bypass: no stale echo comes back when switched off again --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     isolate(e);
     e.setDelayMix(1.0f); e.setDelayFeedback(0.8f); e.setReverbMix(1.0f); e.setMix(1.0f);
     std::vector<float> ins, outs;
@@ -284,7 +285,7 @@ static void test_bypass_clears_tails() {
     check(tail < 1e-6, "silence after un-bypassing (largest sample %.8f)", tail);
 
     // Control experiment: without bypass, the same tail is clearly audible at that point.
-    DemonicEngine c(static_cast<float>(kFs));
+    auto c_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& c = c_rig->engine;
     isolate(c);
     c.setDelayMix(1.0f); c.setDelayFeedback(0.8f); c.setReverbMix(1.0f); c.setMix(1.0f);
     run_recorded(c, [&](size_t n) { return (n < 22050) ? 0.8f * std::sin(2.0 * kPi * 300.0 * n / kFs) : 0.0f; },
@@ -295,7 +296,7 @@ static void test_bypass_clears_tails() {
 
 static void test_bypass_then_effects_return() {
     std::printf("\n-- Bypass: effects come back to normal afterwards --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     isolate(e); e.setDrive(12); e.setMix(1.0f);
     std::vector<float> ins, outs;
     run_recorded(e, [&](size_t n) { return 0.3f * std::sin(2.0 * kPi * 220.0 * n / kFs); },
@@ -308,7 +309,7 @@ static void test_bypass_then_effects_return() {
 
 static void test_bypass_clears_runaway_feedback() {
     std::printf("\n-- Bypass: doubles as a panic button for runaway echo --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     isolate(e); e.setDelayFeedback(1.05f); e.setDelayMix(0.3f); e.setMix(1.0f);
     std::vector<float> ins, outs;
     const size_t onAt = 44100 * 25;
@@ -324,7 +325,7 @@ static void test_bypass_clears_runaway_feedback() {
 
 static void test_extremes_stay_bounded() {
     std::printf("\n-- Safety: extreme settings never exceed full scale --\n");
-    DemonicEngine e(static_cast<float>(kFs));
+    auto e_rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = e_rig->engine;
     e.loadPreset(1); e.setDrive(12); e.setWavefold(5); e.setDelayFeedback(1.05f); e.setDelayMix(1); e.setReverbMix(1);
     auto out = render(e, [](size_t n) { return (n < 44100) ? 0.9f * std::sin(2.0 * kPi * 220.0 * n / kFs) : 0.0f; }, 60.0, 60.0);
     double peak = 0; bool finite = true;
@@ -353,7 +354,7 @@ static void test_same_sound_at_48k() {
     for (int r = 0; r < 2; ++r) {
         const double fs = rates[r];
         {   // Echo time: one click in, find the echo.
-            DemonicEngine e(static_cast<float>(fs));
+            auto e_rig = std::make_unique<TestEngine>(fs); DemonicEngine& e = e_rig->engine;
             isolate(e); e.setDelayMix(0.5f); e.setDelayFeedback(0.0f);
             auto out = render_at(e, fs, [](size_t n) { return n == 0 ? 0.9f : 0.0f; }, 0.5);
             size_t from = static_cast<size_t>(0.1 * fs), best = from;
@@ -361,7 +362,7 @@ static void test_same_sound_at_48k() {
             echoAt[r] = 1000.0 * best / fs;
         }
         {   // Tone filter: level of a 3 kHz sine after the always-on low-pass.
-            DemonicEngine e(static_cast<float>(fs));
+            auto e_rig = std::make_unique<TestEngine>(fs); DemonicEngine& e = e_rig->engine;
             isolate(e);
             auto out = render_at(e, fs, [&](size_t n) { return 0.5f * std::sin(2.0 * kPi * 3000.0 * n / fs); }, 1.0);
             double sum = 0; size_t from = out.size() / 2;
@@ -369,7 +370,7 @@ static void test_same_sound_at_48k() {
             toneRms[r] = std::sqrt(sum / (out.size() - from));
         }
         {   // Pitch shifter: -500 cents on a 220 Hz sine.
-            DemonicEngine e(static_cast<float>(fs));
+            auto e_rig = std::make_unique<TestEngine>(fs); DemonicEngine& e = e_rig->engine;
             isolate(e); e.setPitchShift(-500.0f);
             auto out = render_at(e, fs, [&](size_t n) { return 0.5f * std::sin(2.0 * kPi * 220.0 * n / fs); }, 2.5);
             std::vector<float> tail(out.end() - static_cast<long>(fs), out.end());
@@ -386,8 +387,110 @@ static void test_same_sound_at_48k() {
           "-500 cents lands on the right note at both rates (error %+.1f / %+.1f cents)", pitchErr[0], pitchErr[1]);
 }
 
+static void test_echo_time() {
+    std::printf("\n-- Echo time: the echo arrives after the ECHO TIME setting --\n");
+    const float times[] = {0.05f, 0.5f, 1.5f, 2.0f};
+    for (float t : times) {
+        auto rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = rig->engine;
+        isolate(e); e.setDelayMix(0.5f); e.setDelayFeedback(0.0f); e.setDelayTime(t);
+        const size_t clickAt = static_cast<size_t>(1.0 * kFs);          // let the delay glide settle first
+        auto out = render_at(e, kFs, [&](size_t n) { return n == clickAt ? 0.9f : 0.0f; }, 1.0 + t + 0.3);
+        size_t from = clickAt + static_cast<size_t>(0.03 * kFs), best = from;   // skip the chorus copy at 10 ms
+        for (size_t i = from; i < out.size(); ++i) if (std::fabs(out[i]) > std::fabs(out[best])) best = i;
+        const double ms = 1000.0 * (best - clickAt) / kFs;
+        check(std::fabs(ms - 1000.0 * t) < 1.0, "%4.0f ms setting: echo at %.1f ms", 1000.0 * t, ms);
+    }
+}
+
+static void test_freeze_loop() {
+    std::printf("\n-- Freeze: loops the last second, without a click at the loop point --\n");
+    auto rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = rig->engine;
+    isolate(e);
+    std::vector<float> ins, outs;
+    const size_t freezeAt = static_cast<size_t>(2.0 * kFs);
+    // A gliding tone, so every part of the last second is different and a wrong loop length shows.
+    double ph = 0;
+    run_recorded(e, [&](size_t n) {
+                     if (n >= freezeAt) return 0.0f;
+                     ph += 2.0 * kPi * (150.0 + 100.0 * n / kFs) / kFs;
+                     return 0.6f * static_cast<float>(std::sin(ph)); },
+                 [&](size_t n) { if (block_has(n, freezeAt)) e.setSpectralFreeze(true); }, 6.0, ins, outs);
+    const size_t loop = static_cast<size_t>(kFs), from = freezeAt + static_cast<size_t>(1.0 * kFs);
+    double periodErr = 0, jumpLoop = 0, jumpElsewhere = 0, level = 0;
+    for (size_t i = from; i + loop < outs.size(); ++i) periodErr = std::fmax(periodErr, std::fabs(outs[i + loop] - outs[i]));
+    for (size_t i = from + 1; i < outs.size(); ++i) {
+        const double jump = std::fabs(outs[i] - outs[i - 1]);
+        level = std::fmax(level, std::fabs(outs[i]));
+        // The loop restarts every second, counted from the press (to the block it landed in).
+        const size_t sincePress = (i - (freezeAt - freezeAt % kBlock)) % loop;
+        if (sincePress < 8 || sincePress > loop - 8) jumpLoop = std::fmax(jumpLoop, jump);
+        else jumpElsewhere = std::fmax(jumpElsewhere, jump);
+    }
+    check(level > 0.1, "the frozen loop keeps sounding after the input stops (peak %.2f)", level);
+    check(periodErr < 1e-3, "it repeats every 1.000 s (largest difference one second apart: %.5f)", periodErr);
+    check(jumpLoop <= 1.5 * jumpElsewhere, "no click at the loop point (largest step there %.3f, elsewhere %.3f)",
+          jumpLoop, jumpElsewhere);
+}
+
+static void test_harmony() {
+    std::printf("\n-- Harmony: a second voice a fifth above, only when switched on --\n");
+    // A pure tone through a delay-sweep shifter spreads into sidebands, so compare like with like: the
+    // fifth from the harmony voice against the fifth the main shifter makes at +700 cents.
+    const double fifthHz = 220.0 * std::pow(2.0, 7.0 / 12.0);
+    auto fifth_with = [&](float pitch, float harmCents, float harmBlend) {
+        auto rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = rig->engine;
+        isolate(e); e.setPitchShift(pitch); e.setHarmony(harmCents, harmBlend);
+        auto out = render(e, [](size_t n) { return 0.4f * std::sin(2.0 * kPi * 220.0 * n / kFs); }, 2.0, 1.0);
+        return magnitude_at(out, fifthHz);
+    };
+    const double off = fifth_with(0, 700, 0), on = fifth_with(0, 700, 0.8f), mainShift = fifth_with(700, 0, 0);
+    check(on > 20.0 * off, "harmony on adds a fifth at %.1f Hz (x%.0f vs off)", fifthHz, on / off);
+    check(on > 0.5 * mainShift, "about as strong as the main shifter's fifth (%.0f%%)", 100.0 * on / mainShift);
+    // Relative to the main shift: pitch -500 + harmony +700 = +200 cents.
+    const double up2 = fifth_with(-500, 700, 0.8f);
+    auto rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = rig->engine;
+    isolate(e); e.setPitchShift(-500); e.setHarmony(700, 0.8f);
+    auto out = render(e, [](size_t n) { return 0.4f * std::sin(2.0 * kPi * 220.0 * n / kFs); }, 2.0, 1.0);
+    const double at200 = magnitude_at(out, 220.0 * std::pow(2.0, 2.0 / 12.0));
+    check(at200 > 5.0 * up2, "it follows the pitch shift: -500 + 700 cents puts it at %.1f Hz",
+          220.0 * std::pow(2.0, 2.0 / 12.0));
+}
+
+static void test_reverb_tail() {
+    std::printf("\n-- Reverb: a tail that decays --\n");
+    auto rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = rig->engine;
+    isolate(e); e.setReverbMix(1.0f);
+    auto out = render_at(e, kFs, [](size_t n) { return (n < 2205) ? 0.8f * std::sin(2.0 * kPi * 300.0 * n / kFs) : 0.0f; }, 6.0);
+    auto rms = [&](double a, double b) { double s = 0; size_t i0 = a * kFs, i1 = b * kFs;
+                                         for (size_t i = i0; i < i1; ++i) s += out[i] * out[i]; return std::sqrt(s / (i1 - i0)); };
+    const double early = rms(0.3, 0.8), late = rms(5.0, 6.0);
+    bool finite = true; for (float v : out) finite = finite && std::isfinite(v);
+    check(finite && early > 0.005, "tail after the sound stops (RMS %.4f at 0.3-0.8 s)", early);
+    check(late < 0.1 * early, "it decays (RMS %.5f at 5-6 s)", late);
+}
+
+static void test_short_bypass_still_clears() {
+    std::printf("\n-- Bypass: released before the long buffers finish clearing, still no stale echo --\n");
+    auto rig = std::make_unique<TestEngine>(kFs); DemonicEngine& e = rig->engine;
+    isolate(e); e.setDelayFeedback(1.05f); e.setDelayMix(0.5f); e.setDelayTime(1.0f);
+    std::vector<float> ins, outs;
+    const size_t onAt = static_cast<size_t>(3.0 * kFs), offAt = onAt + static_cast<size_t>(0.015 * kFs);   // 15 ms
+    run_recorded(e, [&](size_t n) { return (n < 9000) ? 0.3f * std::sin(2.0 * kPi * 200.0 * n / kFs) : 0.0f; },
+                 [&](size_t n) { if (block_has(n, onAt)) e.setBypass(true); if (block_has(n, offAt)) e.setBypass(false); },
+                 6.0, ins, outs);
+    double before = 0; for (size_t i = onAt - 22050; i < onAt; ++i) before = std::fmax(before, std::fabs(outs[i]));
+    double after = 0; for (size_t i = offAt + 2048; i < outs.size(); ++i) after = std::fmax(after, std::fabs(outs[i]));
+    check(before > 0.05, "sanity: the echo was circulating (peak %.2f)", before);
+    check(after < 1e-6, "after a 15 ms bypass it is gone (peak %.8f)", after);
+}
+
 int main() {
     test_same_sound_at_48k();
+    test_echo_time();
+    test_freeze_loop();
+    test_harmony();
+    test_reverb_tail();
+    test_short_bypass_still_clears();
     test_pitch_shift();
     test_pitch_shift_voice_like();
     test_pitch_shift_is_bounded_and_clickless();

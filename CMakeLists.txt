@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.18)   # FetchContent SOURCE_SUBDIR
 project(vocal_fx_processor C CXX)
 include(cmake/version.cmake)   # VFX_VERSION, from the latest v* git tag
 
@@ -15,13 +15,35 @@ option(BUILD_TESTS       "Build the headless DSP tests (no audio hardware needed
 option(USE_SYSTEM_RAYLIB "Use an installed raylib (>= 5.0) instead of downloading 5.0"   OFF)
 
 # ----------------------------------------------------------------------------------------------
-# The DSP engine: plain C++, no audio or graphics dependencies. Shared by the desktop app and the
-# tests (and, later, the Pico build).
+# DaisySP, for one file: the ReverbSc reverb in its DaisySP-LGPL submodule (LGPL-2.1; see README).
+# Downloaded at a pinned commit the first time (needs internet), or, offline, point CMake at a local
+# clone made with --recurse-submodules:  -DFETCHCONTENT_SOURCE_DIR_DAISYSP=/path/to/DaisySP
+# The Daisy build (daisy/Makefile) compiles the same file.
+# ----------------------------------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(daisysp
+    GIT_REPOSITORY https://github.com/electro-smith/DaisySP.git
+    GIT_TAG        2c72eaf9eac5fc0dca1919d65d606da907832618
+    GIT_SUBMODULES DaisySP-LGPL
+    SOURCE_SUBDIR  no-cmake)   # only fetch: DaisySP's own CMake build is not used
+FetchContent_MakeAvailable(daisysp)
+set(DAISYSP_LGPL_SOURCE ${daisysp_SOURCE_DIR}/DaisySP-LGPL/Source)
+if(NOT EXISTS ${DAISYSP_LGPL_SOURCE}/Effects/reverbsc.cpp)
+    message(FATAL_ERROR "DaisySP-LGPL is missing from ${daisysp_SOURCE_DIR}: clone DaisySP with --recurse-submodules.")
+endif()
+
+add_library(daisysp_reverbsc STATIC ${DAISYSP_LGPL_SOURCE}/Effects/reverbsc.cpp)
+target_include_directories(daisysp_reverbsc PUBLIC ${DAISYSP_LGPL_SOURCE})
+
+# ----------------------------------------------------------------------------------------------
+# The DSP engine: no audio or graphics dependencies (only ReverbSc). Shared by the desktop app and
+# the tests; the Daisy build compiles the same sources.
 # ----------------------------------------------------------------------------------------------
 add_library(demonic_engine STATIC src/demonic_engine.cpp)
 target_include_directories(demonic_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(demonic_engine PUBLIC daisysp_reverbsc)
 if(NOT MSVC)
-    target_compile_options(demonic_engine PRIVATE -Wall -Wextra)
+    target_compile_options(demonic_engine PRIVATE -Wall -Wextra -Wshadow)
 endif()
 
 # ----------------------------------------------------------------------------------------------
@@ -113,5 +135,5 @@ if(BUILD_DESKTOP)
     endif()
 endif()
 
-# The Raspberry Pi Pico build is a separate CMake project because it needs the Pico SDK's
-# cross-compiler toolchain. See pico/CMakeLists.txt.
+# The Daisy Seed build is a separate Makefile project because it needs libDaisy and an Arm
+# cross-compiler. See daisy/Makefile.
