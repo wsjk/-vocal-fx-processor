@@ -3,12 +3,13 @@ name: vocal-fx-processor
 description: >-
   Development runbook for the Vocal FX Processor demonic vocal synthesis engine.
   Use when building, testing, modifying DSP stages, extending the desktop app
-  or RP2350 firmware, adding presets or effects, or debugging the DemonicEngine pipeline.
+  or Daisy Seed firmware (or the previous board's RP2350 benchmark), adding presets
+  or effects, or debugging the DemonicEngine pipeline.
 ---
 
 # Vocal FX Processor Development Skill
 
-Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a pitch shifter, 10 numbered effect stages and a wet/dry mix, with true bypass. It runs in a desktop app (raylib + PortAudio), and there is an RP2350 benchmark target (WeAct RP2350B Core).
+Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a pitch shifter, 10 numbered effect stages and a wet/dry mix, with true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (benchmark in `daisy/`). `pico/` keeps the benchmark for the previous board, the WeAct RP2350B Core.
 
 ---
 
@@ -16,7 +17,7 @@ Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a 
 
 1. **Single precision only.** All maths is `float`. Use the `kPi` / `kTwoPi` constants and `f`-suffixed literals, and call `std::sin`, `std::tanh`, `std::abs` etc. on `float` arguments (or `sinf`/`tanhf`/`fabsf`). Never use `M_PI` or bare double literals.
 2. **Zero dynamic allocation.** All buffers are fixed-size members of `DemonicEngine`, with no `new`, `malloc` or `std::vector`. `sizeof(DemonicEngine)` is 186,824 bytes, so it must be a global/static object, never a local.
-3. **Hardware-agnostic core.** `demonic_engine.cpp` includes only `<cmath>`, `<algorithm>` and `<iterator>`, and the header only `<cstddef>` and `<cstdint>`. Do not add PortAudio, raylib or Pico SDK includes.
+3. **Hardware-agnostic core.** `demonic_engine.cpp` includes only `<cmath>`, `<algorithm>` and `<iterator>`, and the header only `<cstddef>` and `<cstdint>`. Do not add PortAudio, raylib, libDaisy or Pico SDK includes.
 4. **Two threads (desktop).** The audio callback (real-time, no allocations) talks to the UI thread through `std::atomic` only. There are no mutexes in the audio path.
 5. **`resetState()` must zero every piece of effect memory.** True bypass depends on it.
 6. **`dsp_pipeline.hpp` / `dsp_pipeline.cpp` are empty stubs.** All active DSP lives in `demonic_engine.hpp/.cpp`.
@@ -54,7 +55,7 @@ The script puts arm-none-eabi on `PATH`, defaults `LIBDAISY_DIR` to `/Users/ww/s
 .agents/skills/vocal-fx-processor/scripts/build_pico.sh      # -> pico/build/vocal_pico_bench.uf2
 PICO_BOARD=pico .agents/skills/vocal-fx-processor/scripts/build_pico.sh   # original RP2040 Pico instead (fresh pico/build)
 ```
-The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `PICO_SDK_PATH` to `/Users/ww/src/pico-sdk`. `pico/CMakeLists.txt` defaults `PICO_BOARD` to `weact_studio_rp2350b_core` (Arm Cortex-M33 cores, FPU). Flash by holding BOOT and copying the `.uf2` to the `RP2350` drive (or use the `pico-hw-test` skill), then read the results with `screen /dev/tty.usbmodem* 115200`. Board choice, WM8731 audio design, core split and parts: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp` (checked by `tests/hw_pinout_test.cpp`).
+The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `PICO_SDK_PATH` to `/Users/ww/src/pico-sdk`. `pico/CMakeLists.txt` defaults `PICO_BOARD` to `weact_studio_rp2350b_core` (Arm Cortex-M33 cores, FPU). Flash by holding BOOT and copying the `.uf2` to the `RP2350` drive (or use the `pico-hw-test` skill), then read the results with `screen /dev/tty.usbmodem* 115200`. `docs/HARDWARE_PLAN.md` and `include/hw_pinout.hpp` now describe the Daisy Seed, not this board.
 
 ---
 
@@ -89,7 +90,8 @@ The script puts the CMake and arm-none-eabi toolchains on `PATH` and defaults `P
 | **DSP Engine** | `include/demonic_engine.hpp`, `src/demonic_engine.cpp` | `DemonicEngine`, `processBlock()`, `resetState()`, `setBypass()`, `VocalPreset`, `kPitchWindow`, `kPitchFade` |
 | **Desktop App** | `desktop/main_desktop.cpp` | `audioCallback()`, `guiParam[]` atomics, `selectPreset()`, `render_oled()`, `draw_encoder()`, `toggleBypass` lambda |
 | **Simulator logic** | `include/sim_controls.hpp`, `include/sim_layout.hpp`, `tests/sim_controls_test.cpp` | `simctl::spec()`, `norm`/`from_norm`/`step`, `preset_values`; `simlayout::Layout::make()`, `KnobDrag` |
-| **Pico Firmware** | `pico/main_pico.cpp`, `pico/CMakeLists.txt` | Benchmark only (`kScenarios`, `measureUsPerBlock`); no audio I/O yet |
+| **Daisy Firmware** | `daisy/main_daisy.cpp`, `daisy/Makefile`, `include/engine_bench.hpp` | Benchmark only (`bench::kScenarios`, `bench::measureUsPerBlock`); no audio I/O yet |
+| **Pico Firmware** (previous board) | `pico/main_pico.cpp`, `pico/CMakeLists.txt` | Same benchmark for the WeAct RP2350B Core |
 | **DSP Tests** | `tests/engine_dsp_test.cpp` | `isolate()`, `render()`, `run_recorded()`, `block_has()`, `dominant_freq()`, `magnitude_at()` |
 | **Stale test** | `tests/engine_smoke_test.cpp` | Calls removed `resetSubToggleCount()`/`getSubToggleCount()`; not in CMake |
 | **Build System** | `CMakeLists.txt` | `demonic_engine` static lib; options `BUILD_DESKTOP`, `BUILD_TESTS`, `USE_SYSTEM_RAYLIB` |

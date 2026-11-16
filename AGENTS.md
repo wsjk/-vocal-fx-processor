@@ -1,12 +1,12 @@
 # Vocal FX Processor — Agent Instructions
 
-Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and there is an RP2350 benchmark target (WeAct RP2350B Core).
+Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (benchmark in `daisy/`). `pico/` keeps the benchmark for the previous board, the WeAct RP2350B Core.
 
 ## Skills
 
 | Skill | Path | When to Use |
 | :--- | :--- | :--- |
-| **vocal-fx-processor** | [SKILL.md](.agents/skills/vocal-fx-processor/SKILL.md) | Building, testing, modifying DSP stages, extending the desktop app or RP2350 firmware, adding presets/effects, debugging `DemonicEngine`. |
+| **vocal-fx-processor** | [SKILL.md](.agents/skills/vocal-fx-processor/SKILL.md) | Building, testing, modifying DSP stages, extending the desktop app or Daisy Seed firmware (or the RP2350 benchmark), adding presets/effects, debugging `DemonicEngine`. |
 
 ## Quick Reference
 
