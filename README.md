@@ -166,12 +166,12 @@ vocal-fx-processor/
 ├── docs/
 │   ├── USER_GUIDE.md           End-user guide: controls, parameters, presets, recipes, troubleshooting
 │   ├── DEVELOPER_GUIDE.md      Architecture, stage-by-stage DSP walkthrough, C++ primer, known issues, Pico notes
-│   └── HARDWARE_PLAN.md        Board choice, WM8731 audio design, pin map, shopping list, next steps
+│   └── HARDWARE_PLAN.md        Board choice (Daisy Seed), audio design, pin map, shopping list, next steps
 ├── include/
 │   ├── demonic_engine.hpp      DemonicEngine class and VocalPreset struct
 │   ├── sim_controls.hpp        Simulator encoders: ranges, steps, display, preset values
 │   ├── sim_layout.hpp          Simulator enclosure geometry, hit-testing, knob dragging
-│   ├── hw_pinout.hpp           Planned hardware pin map (RP2350B + WM8731)
+│   ├── hw_pinout.hpp           Planned hardware pin map (Daisy Seed)
 │   ├── sim_font.hpp            Embedded DejaVu Sans Mono for the simulator
 │   └── dsp_pipeline.hpp        Empty placeholder (not used)
 ├── src/
@@ -199,5 +199,5 @@ vocal-fx-processor/
 
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md):** using the pedal: controls, every encoder, presets, Freeze, Bypass, sound recipes, troubleshooting.
 - **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md):** how the code works, written for Python programmers new to C++. It covers threads and atomics, each DSP stage, the build system, how to extend the engine, tests, known issues and the Pico port.
-- **[docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md):** the planned hardware pedal: why the WeAct RP2350B Core, the WM8731 codec and mic preamp, firmware layout and latency, the pin map, what to buy, and next steps.
+- **[docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md):** the planned hardware pedal: why the Daisy Seed 65MB, the audio path and mic preamp, firmware layout and latency, the pin map, what to buy, and next steps.
 - **[Releases](https://github.com/wsjk/-vocal-fx-processor/releases):** the changelog. Every merge to `main` is tagged and released, and the notes list the merged PRs. The version shows in the simulator's title bar and the Pico benchmark's output.

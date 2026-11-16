@@ -49,7 +49,7 @@ vocal-fx-processor/
 │   ├── demonic_engine.hpp      The DSP engine's "interface": class + preset struct   [implemented]
 │   ├── sim_controls.hpp        Simulator: the 11 encoders as data (range, step, display, presets)
 │   ├── sim_layout.hpp          Simulator: enclosure geometry, hit-testing, mouse-drag knob turning
-│   ├── hw_pinout.hpp           Planned hardware wiring: RP2350B pins for codec, OLED, encoders, footswitches
+│   ├── hw_pinout.hpp           Planned hardware wiring: Daisy Seed pins for OLED, LEDs, encoders, footswitches
 │   ├── sim_font.hpp            Simulator: embedded DejaVu Sans Mono font (same as Phase Box)
 │   └── dsp_pipeline.hpp        EMPTY (0 bytes), not used by the build
 ├── src/
@@ -732,7 +732,7 @@ Checks the simulator without opening a window: the enclosure fits the window; th
 
 ### `hw_pinout_test.cpp`: does the planned wiring work?
 
-Checks `include/hw_pinout.hpp`, the planned pin map for the RP2350B (see [HARDWARE_PLAN.md](HARDWARE_PLAN.md)): every pin is GP0–GP47; none is used twice or collides with the board's LED, button, PSRAM select or the ADC pins; SDA/SCL are I²C0 pins; the I²S word clock is the pin after the bit clock; the codec's master clock is on a clock-output pin; and there is one encoder per `simctl` parameter.
+Checks `include/hw_pinout.hpp`, the planned pin map for the Daisy Seed (see [HARDWARE_PLAN.md](HARDWARE_PLAN.md)): every pin is D0–D30; none is used twice or takes the USB pins kept free (D0, D29, D30); SCL/SDA are I²C1 (D11, D12); the LED chain is on SPI1 MOSI (D10); and there is one encoder per `simctl` parameter.
 
 **Writing your own.** Use the helpers: `isolate(engine)` turns every optional effect off so only the one under test is audible; `render(engine, generator, seconds, keepSeconds)` feeds a signal in 64-sample blocks (the desktop app's block size) and returns the last part of the output; then assert on `magnitude_at` or `dominant_freq`.
 

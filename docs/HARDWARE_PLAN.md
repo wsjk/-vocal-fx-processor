@@ -1,107 +1,106 @@
 # Hardware Plan
 
-Where the pedal's hardware stands and what happens next. Board decided 2026-11-14; audio design and pin map added 2026-11-15 from a review of an outside hardware specification (see §7). The technical background (real-time budget, what to try if the engine is too slow) is in [Developer Guide §11](DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico).
+Where the pedal's hardware stands and what happens next. Board changed to the Daisy Seed on 2026-11-15 (§1); the analog front end comes from a review of an outside hardware specification (see §7). The real-time background (what to try if the engine is too slow) is in [Developer Guide §11](DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico), which still describes the earlier RP2350 benchmark.
 
-## 1. Board: WeAct RP2350B Core
+## 1. Board: Electrosmith Daisy Seed 65MB
 
-**Choice:** the [WeAct Studio RP2350B Core](https://github.com/WeActStudio/WeActStudio.RP2350BCoreBoard) with 16 MB flash. It is about 41 × 41 mm, has USB-C, and costs a few dollars. Buy it from WeAct's own AliExpress store ([WeAct Studio Official Store](https://weactstudio.aliexpress.com/store/1101545918) or [WeAct Studio One Store](https://www.aliexpress.com/store/1104927695)); other sellers copy the listings.
+**Choice:** the [Electrosmith Daisy Seed](https://electro-smith.com/pages/the-daisy-seed), 65MB version: an STM32H750 (Arm Cortex-M7, 480 MHz, single- and double-precision FPU), a stereo audio codec on the board, 31 GPIO, 64 MB SDRAM, 128 KB internal flash plus 8 MB QSPI flash. Firmware uses Electrosmith's [libDaisy](https://github.com/electro-smith/libDaisy).
 
-| | WeAct RP2350B Core | Pico / Pico 2 | Black Pill (STM32F411) |
-| :--- | :--- | :--- | :--- |
-| Usable GPIO | **48** | 26 | about 30 |
-| RAM | **520 KB** | 264 KB / 520 KB | 128 KB |
-| CPU | 2× Cortex-M33, 150 MHz, **FPU** | M0+ 133 MHz, no FPU / M33 150 MHz, FPU | M4F 100 MHz, FPU |
-| Toolchain | Pico SDK (already used by `pico/`) | Pico SDK | STM32 HAL (rewrite) |
+| | Daisy Seed 65MB | WeAct RP2350B Core + WM8731 (previous plan) |
+| :--- | :--- | :--- |
+| CPU | 1× Cortex-M7, 480 MHz, FPU | 2× Cortex-M33, 150 MHz, FPU |
+| RAM | 512 KB AXI SRAM (+ DTCM, D2 SRAM), 64 MB SDRAM | 520 KB |
+| Audio | Codec on the board, line-level in and out | Separate WM8731, I²S over PIO, MCLK from GP21 |
+| GPIO | 31 | 48 |
+| Toolchain | libDaisy (rewrite of `pico/`) | Pico SDK (`pico/` as it is) |
 
-Why the others are out:
+Why it replaced the RP2350B:
 
-- **Potentiometers instead of encoders** would fit a Pico 2 (16 pots through one CD74HC4067 analog multiplexer need only 5 pins), but a pot cannot be moved by a preset, so presets and knob positions would disagree. Encoders stay, as in the simulator.
+- **Cost.** WM8731 parts turned out to cost far more than first assumed (the LCSC bare chip was about $8.67 before shipping, modules $20–50), so the RP2350B + codec came to about the price of a Daisy Seed, which has its codec built in. Stompboxparts (US) [lists the Daisy Seed 65MB](https://stompboxparts.com/electrosmith) at $24.00 with headers supplied but not soldered (checked 2026-11-15; check stock before ordering).
+- **Speed.** About 3× the clock of one RP2350 core, so the engine has much more headroom.
+- **Less to build.** No codec board, no I²C codec setup, no PIO I²S, no master-clock trick.
 
-- **Pico / Pico 2:** 26 GPIO is not enough for the panel (see §4) without I²C expanders. The Pico 2 (SC1631 / SC1632 "Pico 2 H") has the same chip as the WeAct in its smaller RP2350A package, so it shares the FPU and RAM but not the pins.
-- **Black Pill:** the engine (`sizeof(DemonicEngine)` ≈ 182 KB) does not fit in 128 KB, the pins are just as tight, and `pico/` would have to be rewritten.
-
-**Use the Arm cores.** The RP2350 can run either two Arm Cortex-M33 cores or two RISC-V Hazard3 cores. Only the Arm cores have the floating-point unit the engine needs. The board's SDK definition (`weact_studio_rp2350b_core`, in Pico SDK 2.x) builds for Arm by default.
+What it costs: the Daisy has one core (audio and controls share it, §3), no PIO (the WS2812 chain uses SPI, §4), and 31 GPIO, which the panel uses almost entirely (§4). The `pico/` benchmark (`vocal_pico_bench`, built for `weact_studio_rp2350b_core`) stays in the repo until the Daisy port replaces it.
 
 ## 2. Audio design
 
 ```
-mic (XLR / TRS) ─► preamp +20…+50 dB ─► WM8731 ADC ─I²S─► RP2350B ─I²S─► WM8731 DAC ─► output buffer + filter ─► line out
-                   (NE5532 / TL072,                        core 1: DemonicEngine
-                    DC blocking)                           core 0: controls, OLED, codec setup
+mic (XLR / TRS) ─► preamp +20…+50 dB ─► Daisy audio in L ─► codec ─► STM32H750 ─► codec ─► Daisy audio out L ─► output buffer ─► line out
+                   (NE5532 / TL072,                                  audio callback:
+                    DC blocking)                                     DemonicEngine
 ```
 
-- **Codec: WM8731** (Wolfson / Cirrus Logic). Stereo 24-bit ADC and DAC, set up over I²C (address 0x1A) at boot: input select, mic boost, mute, I²S format. The RP2350 is I²S clock master and drives the data through PIO and DMA. Cheap modules and the bare chip are both easy to find; §5 lists what to check before buying.
-- **Mic preamp.** The WM8731's own mic input has only about +20 dB of boost, which is not enough for dynamic mics. Put a low-noise op-amp preamp (NE5532 or TL072) in front of the line input, with a gain trim of roughly +20 to +50 dB and DC blocking.
-- **Output.** An op-amp buffer and low-pass reconstruction filter after the DAC, to a ¼" TRS (or XLR) line out.
+- **Codec: the Daisy's own.** libDaisy sets it up and streams it over the STM32's SAI with DMA; the firmware sees only an audio callback. The codec part differs between Seed revisions, and libDaisy detects which one is fitted. Audio uses the Seed's dedicated audio pins (header pins 16–19), not GPIO. The input is line level.
+- **Sample rate: 48 kHz.** libDaisy runs the codec at 48 kHz by default; the engine takes its sample rate in the constructor (`DemonicEngine(float sampleRate)`), so it runs at 48 kHz instead of the desktop's 44.1 kHz.
+- **Mic preamp.** The line input needs a mic preamp: a low-noise op-amp (NE5532 or TL072) with a gain trim of roughly +20 to +50 dB and DC blocking.
+- **Output.** An op-amp buffer after the Daisy's audio out, to a ¼" TRS (or XLR) line out.
 - **Phantom power (optional).** For condenser mics: a 48 V boost converter feeding the mic through two matched 6.81 kΩ resistors, with 47 µF coupling capacitors before the preamp.
-- **Grounding and power.** Separate analog (AGND) and digital (DGND) ground areas joined at one point near the supply filter capacitors, and separate low-dropout regulators for the analog 3.3 V (AVDD) and digital 3.3 V (DVDD), so I²S clock noise stays out of the preamp.
-- **Master clock.** The board's 12 MHz crystal goes straight out on clock-output pin GP21 (`clk_gpout0`) to the WM8731's MCLK, and the codec runs in its 12 MHz "USB mode", which produces exact 44.1 kHz and 48 kHz. This avoids making 11.2896 / 12.288 MHz with a PIO or fractional divider, which adds jitter.
+- **Grounding and power.** Keep the preamp's analog ground separate from digital ground, joined at one point near the supply filter capacitors; the Seed has separate AGND (pin 20) and GND (pin 40) pins for this. Run the op-amps from the pedal supply on a split (virtual-ground) rail, not from the Seed's 3.3 V pins, which are too low for an NE5532 or TL072. Check the Seed datasheet's VIN range before feeding it the pedal supply.
 
 ## 3. Firmware layout
 
-- **Core 1: audio only.** Two ping-pong DMA buffers per direction between the PIO I²S state machines and RAM; Core 1 calls `DemonicEngine::processBlock` on each finished buffer. Its code should run from RAM (`__not_in_flash_func`, or build the whole program with `pico_set_binary_type(... copy_to_ram)`) so flash cache misses cannot delay it. The engine object (~182 KB) is a global in SRAM.
-- **Core 0: everything else.** Encoders, footswitches, WS2812 LED rings, the OLED (about 30 frames a second), and the WM8731 register setup, all over the shared I²C bus. It applies encoder values with the same `simctl` logic the simulator uses.
-- **Between the cores.** Core 0 writes parameter values into a shared struct of atomics; Core 1 reads them at the start of each block and calls the engine's setters. No locks in the audio path (the same rule as the desktop app).
-- **Compiler.** The SDK already compiles for the Cortex-M33 with its FPU (`-mcpu=cortex-m33`, `-mfloat-abi=softfp`); the `float` code runs on the FPU as it is, with no fixed-point rewrite. `-mfloat-abi=hard` is an optional later tweak, not a requirement.
+The Daisy has one core, so the RP2350's core split becomes an interrupt split:
+
+- **Audio callback (interrupt).** libDaisy calls it with each finished DMA block; it reads the parameter struct, calls the engine's setters, then `DemonicEngine::processBlock`. Nothing else runs there: no I²C, no allocation, no locks.
+- **Main loop: everything else.** Encoders, footswitches, WS2812 LED rings, and the SSD1306 OLED (about 30 frames a second, on I²C). Encoders are polled at about 1 kHz (from a timer or the loop) and use the same `simctl` value logic as the simulator.
+- **Between them.** The main loop writes parameter values into a shared struct of atomics; the callback reads them at the start of each block. The same no-locks rule as the desktop app.
+- **Memory.** The engine object (`sizeof(DemonicEngine)` ≈ 182 KB) is a plain global. libDaisy's linker script puts `.bss` in the 512 KB SRAM at 0x24000000 (AXI SRAM), so it fits without a section attribute. Do not move it to SDRAM (`.sdram_bss`), which is much slower.
+- **Program size.** The internal flash is 128 KB. If the firmware grows past that, use the Daisy bootloader and run from QSPI or SRAM (libDaisy's `APP_TYPE`).
+- **Compiler.** libDaisy builds for the Cortex-M7 with a hard-float ABI; the engine's `float` code runs on the FPU as it is.
 
 ### Latency
 
 | Block size | One block | Round trip (≈ 2 blocks, plus the codec's filter delay) |
 | :--- | :--- | :--- |
-| 64 samples @ 44.1 kHz | 1.45 ms | about 3 ms + codec |
-| 32 samples @ 44.1 kHz | 0.73 ms | about 1.5 ms + codec |
+| 64 samples @ 48 kHz | 1.33 ms | about 2.7 ms + codec |
+| 32 samples @ 48 kHz | 0.67 ms | about 1.3 ms + codec |
 
-Start with 64-sample blocks: that is what the desktop app and the benchmark use, and 3–4 ms is fine for live vocals. Getting under 2 ms needs 32-sample blocks, which doubles the per-block overhead; try it once the benchmark shows how much headroom there is.
+Start with 64-sample blocks, the size the desktop app and the benchmark use. 32-sample blocks get under 2 ms but double the per-block overhead; try them once the benchmark shows the headroom.
 
 ## 4. Pin map
 
-The exact assignment is in [`include/hw_pinout.hpp`](../include/hw_pinout.hpp), and `tests/hw_pinout_test.cpp` checks it (no pin used twice, none of the board's own pins, I²C and clock pins able to do their job, one encoder per parameter).
+The exact assignment is in [`include/hw_pinout.hpp`](../include/hw_pinout.hpp), and `tests/hw_pinout_test.cpp` checks it (no pin used twice, none of the reserved pins, I²C and LED pins on the right peripheral, one encoder per parameter). Names are libDaisy's `seed::D0`…`seed::D30`, which are not the header pin numbers.
 
-| GPIO | Use |
-| :--- | :--- |
-| GP2, GP3, GP4 | Footswitches: Bypass, Freeze, Preset (to ground, internal pull-ups) |
-| GP5–GP6, GP15–GP20, GP26–GP39 | 11 encoders, A/B pairs, in the simulator's order (PITCH … WET/DRY) |
-| GP8, GP9 | I²C0 SDA, SCL: WM8731 control and SSD1306 OLED (the board's default I²C pins) |
-| GP11, GP12 | I²S bit clock, word clock (must be neighbours) |
-| GP13, GP14 | I²S data out (to the DAC), data in (from the ADC) |
-| GP21 | WM8731 MCLK, 12 MHz from the crystal |
-| GP22 | WS2812 chain for the encoder LED rings |
-| *kept free* | GP0 (optional PSRAM chip select on the board), GP23 (board button), GP25 (board LED), GP40–GP47 (the only ADC pins); also unused: GP1, GP7, GP10, GP24 |
+| Daisy pin | STM32 | Use |
+| :--- | :--- | :--- |
+| D7, D8, D9 | PG10, PG11, PB4 | Footswitches: Bypass, Freeze, Preset (to ground, internal pull-ups) |
+| D1–D6, D13–D28 | | 11 encoders, A/B pairs, in the simulator's order (PITCH … WET/DRY) |
+| D10 | PB5 | SPI1 MOSI: WS2812 chain for the encoder LED rings |
+| D11, D12 | PB8, PB9 | I²C1 SCL, SDA: SSD1306 OLED |
+| *kept free* | PB12, PB14, PB15 | D0 (USB HS ID), D29, D30 (USB HS D−, D+), for a later USB port such as USB MIDI |
 
-That is 33 of 48 pins.
+That is 28 of the 31 pins. Consequences:
+
+- **WS2812 over SPI.** With no PIO, the LED data is SPI1 in transmit-only master mode, each LED bit encoded as several SPI bits. libDaisy's SPI driver configures only MOSI in that mode, so D8 (SPI1 SCK) stays free for a footswitch.
+- **No spare pins.** The encoders use D1–D6 (the SD card pins), D13–D14 (USART1), all twelve ADC pins (D15–D25, D28), the DAC outputs (D22, D23) and the second SAI's pins (D24–D28). An SD card, an expression pedal or a second codec would need pins freed with an I²C GPIO expander (for example an MCP23017 for some of the encoders) on the existing bus.
 
 ## 5. Shopping list
 
-**For the benchmark (§6, step 1):** the board and a USB-C **data** cable (some only carry power). Solder the supplied headers, or leave them off for now.
+**For the benchmark (§6, step 1):** a Daisy Seed 65MB (see §1 for the listing) and a micro-USB **data** cable (some only carry power). Solder the supplied headers.
 
 **For the first audio prototype:**
 
-- **WM8731 codec**, bought cheap (rough prices, 2026-11-15): a generic WM8731 module from AliExpress (about $5–10), or the bare chip from Mouser, Digi-Key or LCSC (about $3–6) on an SSOP-28 adapter board. Avoid paying about $30 for a branded breakout such as MikroE "Audio Codec Proto"; at that price the RP2350B + codec costs as much as an Electrosmith Daisy Seed, which has its own codec. Before buying a module, check that:
-  - MCLK is on the header and can be driven from outside. If the module has its own 12.288 MHz oscillator, it must be possible to disconnect it, because §2 feeds MCLK from GP21.
-  - I²C control mode is selected (MODE low) and CSB is low, which gives address 0x1A.
-  - The line input is on the header. The mic preamp drives it.
-- **Fallback if no suitable WM8731 module turns up:** a PCM1808 ADC module and a PCM5102A DAC module (about $2–4 each). Neither needs I²C setup, and the PCM5102A makes its own clock from the I²S bit clock. The PCM1808 still needs a master clock: GP21's 12 MHz gives 46.875 kHz rather than 48 kHz, or the RP2350 can make about 12.288 MHz with a fractional divider, which adds jitter. Using them would change §2, §4 and `include/hw_pinout.hpp`.
 - Mic preamp and output buffer: NE5532 or TL072 op-amps, plus passives; an XLR or TRS mic jack and a ¼" TRS output jack.
-- Two 3.3 V low-dropout regulators (analog and digital).
+- A pedal power supply and a split-rail (virtual-ground) circuit for the op-amps.
 - 128×64 SSD1306 OLED on I²C.
 - 11 rotary encoders, 3 footswitches, WS2812 LEDs (rings or a strip), breadboard and jumper wires.
-- Optional: a 48 V phantom-power boost module; a Raspberry Pi Debug Probe for SWD debugging.
+- Optional: a 48 V phantom-power boost module; an ST-Link (such as the STLINK-V3MINI) for debugging.
+
+No prices are given here beyond the board's; check live listings before ordering.
 
 ## 6. Next steps
 
-1. **Run the benchmark** (go / no-go). Hold BOOT, plug the board in, copy `pico/build/vocal_pico_bench.uf2` to the `RP2350` drive, and read the USB serial port. Build it with `.agents/skills/vocal-fx-processor/scripts/build_pico.sh`. Results go into Developer Guide §11.
+1. **Port the benchmark** (go / no-go). Rebuild `pico/main_pico.cpp`'s benchmark on libDaisy: run the engine at 48 kHz on synthetic input, time `processBlock` with the Cortex-M7 cycle counter, and print the share of the 1,333 µs budget over USB serial. Flash it over DFU (hold BOOT, press RESET). Results go into Developer Guide §11.
 2. **If it is too slow**, work through the optimisations in Developer Guide §11 ("Things to expect"), measuring after each one.
-3. **Audio pass-through.** WM8731 on a breadboard: I²C setup, 12 MHz MCLK on GP21, PIO I²S in and out with DMA, and a clean sine wave or mic signal straight through (no engine yet).
-4. **Engine on Core 1.** Call `processBlock` from the DMA handler; measure the block time against the deadline.
-5. **Controls and display on Core 0.** Encoders, footswitches, OLED and LED rings, using `include/hw_pinout.hpp` and the simulator's `simctl` value logic.
+3. **Audio pass-through.** Preamp into the Daisy's input, the callback copying input to output, and a clean mic signal straight through (no engine yet).
+4. **Engine in the callback.** Call `processBlock` from the audio callback; measure the block time against the deadline.
+5. **Controls and display in the main loop.** Encoders, footswitches, OLED and SPI LED chain, using `include/hw_pinout.hpp` and the simulator's `simctl` value logic.
 
 ## 7. Review of the outside specification (2026-11-15)
 
-A separate "Hardware Architecture & Design Specification" proposed a Pico 2 with pots, a multiplexer and two footswitches. Adopted from it: the WM8731 codec, the analog front end, grounding and power rules, the core split, and its I²S pins. Not adopted, or corrected:
+A separate "Hardware Architecture & Design Specification" proposed a Pico 2 with pots, a multiplexer and two footswitches. Adopted from it: the analog front end, the grounding rules and the split between audio and control work. Its WM8731 codec and I²S pins were adopted at first and then dropped with the move to the Daisy Seed (§1). Not adopted, or corrected:
 
-- **Board and controls:** kept the WeAct RP2350B with 11 encoders and 3 footswitches (see §1).
-- **Latency:** it claimed under 2 ms round trip with 32–64-sample buffers; only 32-sample blocks get close (§3).
+- **Board and controls:** 11 encoders and 3 footswitches, not pots, because a pot cannot be moved by a preset, so presets and knob positions would disagree.
+- **Latency:** it claimed under 2 ms round trip with 32–64-sample buffers; only 32-sample blocks get there (§3).
 - **Engine description:** it counted "12 stages" and left out the pitch shifter. The engine is a noise gate, a pitch shifter, ten numbered stages and a wet/dry mix (User Guide, "How your voice is processed"). "Spectral Freeze" loops 4,096 samples of recent audio with no FFT, the "Catacomb" reverb is two feedback echoes (Developer Guide §10.5), and bypass is a software crossfade, not a relay "true bypass".
-- **Master clock:** a PIO-generated 11.2896 / 12.288 MHz clock replaced by the crystal's 12 MHz and the codec's USB mode (§2).
-- **I²C pins:** moved from GP0/GP1 to GP8/GP9, because GP0 is the WeAct board's optional PSRAM chip select.
-- **Compiler flags:** `-mfloat-abi=hard` is optional (§3).
+- **Compiler flags:** its `-mfloat-abi=hard` note no longer matters; libDaisy already builds hard-float (§3).
