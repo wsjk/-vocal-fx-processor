@@ -287,12 +287,12 @@ They communicate **only** through a set of global `std::atomic` variables (the "
 
 ### 4.2 What happens in one audio block
 
-Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:44`), which:
+Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:45`), which:
 
-1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 53–58). This updates the preset index the engine reports and the preset fields that have no encoder (harmony); the other values arrive through the encoder atomics in the next step (section 5.4).
-2. Copies every encoder value from the atomics into the engine via setters (lines 60–73). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
-3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 75–80).
-4. Copies the output into the oscilloscope ring buffer (lines 82–87) and publishes the mic peak (line 92).
+1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 54–59). This updates the preset index the engine reports and the preset fields that have no encoder (harmony); the other values arrive through the encoder atomics in the next step (section 5.4).
+2. Copies every encoder value from the atomics into the engine via setters (lines 61–74). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
+3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 76–81).
+4. Copies the output into the oscilloscope ring buffer (lines 83–88) and publishes the mic peak (line 93).
 5. Returns `paContinue` ("keep going").
 
 ### 4.3 Design decisions worth knowing
@@ -300,7 +300,7 @@ Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:44`), which:
 - **The engine knows nothing about PortAudio or raylib.** `DemonicEngine` takes in a float array and fills a float array. That is why it can be tested headlessly (section 9) and is the part meant to be reused on the Daisy Seed.
 - **Everything is allocated up front.** No `new`, no `malloc`, no `std::vector` growth in the audio path — required for real-time safety and for microcontrollers.
 - **Control values are copied in once per block**, not per sample. Cheap, but it means parameter changes are "steppy" (see section 10.10).
-- **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE, engineMemory);`, `main_desktop.cpp:23`), with its long buffers in another global, `engineMemory` (line 22). Both threads can see it, but by convention only the audio thread touches its state. The UI thread only calls `getPreset()` and `getPresetCount()`, which read data that never changes after construction.
+- **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE, engineMemory);`, `main_desktop.cpp:24`), with its long buffers in another global, `engineMemory` (line 23). Both threads can see it, but by convention only the audio thread touches its state. The UI thread only calls `getPreset()` and `getPresetCount()`, which read data that never changes after construction.
 - **Memory footprint:** `DemonicEngine` is about **410 KB**, almost all of it the ReverbSc reverb (~396 KB) plus the pitch and chorus buffers (8 KB each). `DemonicEngineMemory` adds about **576 KB**: the 2 s echo and the 1 s freeze loop. They are separate so the Daisy Seed can keep the engine in fast SRAM and the long buffers in SDRAM (section 11).
 
 ---
@@ -315,7 +315,7 @@ The app is split the way the Phase Box simulator is: pure logic in headers with 
 | `include/sim_layout.hpp` | `simlayout::Layout::make()`: where the enclosure, OLED, group panels, encoders, footswitches, LEDs and jacks are. Hit-testing and overlap helpers, `clicks_from_wheel`, and `KnobDrag` (turning a knob with the mouse: drag round the ring, or up/down from the centre). |
 | `include/sim_font.hpp` | DejaVu Sans Mono, embedded so text looks the same on every machine. |
 
-### 5.1 Globals (lines 22–33)
+### 5.1 Globals (lines 23–34)
 
 ```cpp
 DemonicEngineMemory engineMemory;                  // the engine's long buffers (~576 KB)
@@ -334,9 +334,9 @@ std::atomic<size_t> scopeHead(0);
 
 One atomic per encoder, in an array indexed by `simctl::Param` (`guiParam[simctl::P_DRIVE]` and so on), so the drawing and input code can loop over all twelve. `main()` sets them from preset 0 (pitch 0) before audio starts. The **scope buffer** is a 128-sample circular buffer the audio thread fills with output samples; the UI reads it to draw the waveform. `scopeHead` is how many samples have been written so far (it grows without bound; reads wrap it with `% SCOPE_SIZE`).
 
-**`selectPreset(idx)`** (line 37) runs on the UI thread: it copies the preset's values into the encoder atomics (pitch is not part of a preset and keeps its value), then stores the new index. Values first, index second, so the callback never sees the new preset with the old values.
+**`selectPreset(idx)`** (line 38) runs on the UI thread: it copies the preset's values into the encoder atomics (pitch is not part of a preset and keeps its value), then stores the new index. Values first, index second, so the callback never sees the new preset with the old values.
 
-### 5.2 The audio callback (lines 44–94)
+### 5.2 The audio callback (lines 45–95)
 
 The signature is dictated by PortAudio; you cannot change it. The parts you care about are `inputBuffer`, `outputBuffer`, and `framesPerBuffer`. The first thing it does is cast the generic `void*` buffers to `float*` (since the stream was opened with `paFloat32`):
 
@@ -347,7 +347,9 @@ float* out = static_cast<float*>(outputBuffer);
 
 The preset check uses a `static` local, `lastPreset`, which persists across calls so the callback can detect a *change*. Then every parameter is pushed into the engine, then the block is processed.
 
-### 5.3 `main()` setup (lines 277–311)
+### 5.3 `main()` setup (lines 278–317)
+
+`vocal_desktop --screenshot file.png` runs the app for 60 frames (about a second), saves the window as `file.png` in the current directory, and quits; `docs/images/simulator.png` is made this way (`cd docs/images && ../../build/vocal_desktop --screenshot simulator.png`). Otherwise there are no command-line options. Setup:
 
 1. Pitch to 0 and `selectPreset(0)`, so the encoders hold preset 0's values before the callback first reads them.
 2. `Pa_Initialize()` starts PortAudio.
@@ -358,18 +360,18 @@ The preset check uses a `static` local, `lastPreset`, which persists across call
 
 Error handling is by return code, not exceptions: functions return `paNoError` on success and `main` prints and exits otherwise.
 
-### 5.4 The UI loop (lines 313–433)
+### 5.4 The UI loop (lines 319–444)
 
 Each frame:
 
 1. **Keys:** `P` calls `selectPreset` with the next index; `F` toggles `guiSpectralFreeze` (ignored while bypassed); `B` or `Space` toggles `guiBypass` (and clears `guiSpectralFreeze` when switching bypass on). The footswitches call the same lambdas.
 2. **Mouse:** a press on an encoder starts a `KnobDrag`; while the button is held, the degrees turned move a 0..1 ring position (`drag_pos`) by `degrees / 270`, and `simctl::from_norm` turns that into the value stored in `guiParam`. Keeping `drag_pos` separately means PITCH's snap-to-zero does not trap the knob at 0. Scrolling over an encoder turns it by whole clicks (`simctl::step`, which lands on multiples of the step and stops at the ends). A press on a footswitch acts immediately.
-3. **OLED** (`render_oled`, line 250), drawn at its real 128×64 resolution into the off-screen texture: border, a header (preset number and name, or for 1.5 s after an encoder moves, that encoder's name and value), `BYPASS` or `FREEZE` under the header when active, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to the display; grey while bypassed, red while frozen), and the mic-level bar.
+3. **OLED** (`render_oled`, line 251), drawn at its real 128×64 resolution into the off-screen texture: border, a header (preset number and name, or for 1.5 s after an encoder moves, that encoder's name and value), `BYPASS` or `FREEZE` under the header when active, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to the display; grey while bypassed, red while frozen), and the mic-level bar.
 4. **The pedal:** enclosure with screws and title, jacks and USB port (decorative), the OLED texture scaled 3× with its bezel, the three group panels, each encoder (`draw_encoder`: LED ring with the lit arc from `simctl::origin_degrees` to `simctl::degrees`, red past `warn_above`; a knurled cap that turns with the value; label and value under it), then the footswitch LEDs (preset flash, freeze red, bypass green while effects are on) and footswitches.
 
 This style is called **immediate-mode UI**: there are no button or knob objects. Every frame the code asks "is the mouse over this circle and pressed?", acts on the answer, and draws it. Only the geometry (`Layout`) and value logic (`simctl`) live outside the loop, which is what lets the tests check them without a window.
 
-### 5.5 Shutdown (lines 435–442)
+### 5.5 Shutdown (lines 446–453)
 
 Unload the texture and fonts, close the window, stop and close the audio stream, terminate PortAudio.
 

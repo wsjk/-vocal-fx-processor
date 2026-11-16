@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iostream>
 #include <portaudio.h>
+#include <string>
 #include "raylib.h"
 #include "demonic_engine.hpp"
 #include "sim_controls.hpp"
@@ -274,7 +275,12 @@ void render_oled(RenderTexture2D& canvas, const char* header, bool bypass, bool 
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // `vocal_desktop --screenshot file.png`: run for about a second, save the window as file.png in the
+    // current directory (raylib keeps only the file name), and quit. Used for docs/images/simulator.png.
+    const char* screenshotFile = (argc == 3 && std::string(argv[1]) == "--screenshot") ? argv[2] : nullptr;
+    int frameCount = 0;
+
     guiParam[simctl::P_PITCH].store(0.0f);
     selectPreset(0);                         // encoders start on preset 0 (before audio starts: the callback reads them)
 
@@ -430,6 +436,11 @@ int main() {
         centered_text(help2, L.window_w / 2.0f, L.help_y + 20, 10, GRAY);
 
         EndDrawing();
+
+        if (screenshotFile && ++frameCount == 60) {   // 60 frames: the meters and LEDs have settled
+            TakeScreenshot(screenshotFile);
+            break;
+        }
     }
 
     UnloadRenderTexture(oledCanvas);

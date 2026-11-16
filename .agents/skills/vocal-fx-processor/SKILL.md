@@ -32,7 +32,9 @@ Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a 
 # Requires: brew install cmake portaudio pkg-config  (raylib 5.0 is downloaded on first configure)
 .agents/skills/vocal-fx-processor/scripts/build_desktop.sh
 ./build/vocal_desktop
+(cd docs/images && ../../build/vocal_desktop --screenshot simulator.png)   # refresh the README screenshot (60 frames, then quits)
 ```
+Redo the screenshot whenever the panel changes. `screencapture` cannot capture the window from an agent session (no Screen Recording permission); `--screenshot` uses raylib's `TakeScreenshot` instead.
 
 ### 2. Headless DSP Tests (no audio hardware)
 ```bash
