@@ -25,10 +25,18 @@ if [ ! -f "$LIBDAISY_DIR/build/libdaisy.a" ]; then
     make -C "$LIBDAISY_DIR" -j4
 fi
 
+# DaisySP (only its DaisySP-LGPL ReverbSc source is compiled)
+export DAISYSP_SRC_DIR="${DAISYSP_SRC_DIR:-/Users/ww/src/DaisySP}"
+if [ ! -f "$DAISYSP_SRC_DIR/DaisySP-LGPL/Source/Effects/reverbsc.cpp" ]; then
+    echo "ERROR: DaisySP with its DaisySP-LGPL submodule not found at $DAISYSP_SRC_DIR"
+    echo "  git clone --recurse-submodules https://github.com/electro-smith/DaisySP.git $DAISYSP_SRC_DIR"
+    exit 1
+fi
+
 echo "==> Building benchmark firmware for the Daisy Seed..."
-make -C daisy -j4 LIBDAISY_DIR="$LIBDAISY_DIR"
+make -C daisy -j4 LIBDAISY_DIR="$LIBDAISY_DIR" DAISYSP_SRC_DIR="$DAISYSP_SRC_DIR"
 echo "==> Firmware built: daisy/build/vocal_daisy_bench.bin"
 
 if [ "${1:-}" = "program-dfu" ]; then
-    make -C daisy LIBDAISY_DIR="$LIBDAISY_DIR" program-dfu
+    make -C daisy LIBDAISY_DIR="$LIBDAISY_DIR" DAISYSP_SRC_DIR="$DAISYSP_SRC_DIR" program-dfu
 fi

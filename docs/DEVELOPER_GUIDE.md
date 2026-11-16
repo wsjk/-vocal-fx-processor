@@ -35,6 +35,7 @@ Line numbers (`file:line`) refer to the code as it exists in the repository snap
 | **PortAudio** | Cross-platform library for talking to the sound card. |
 | **raylib** | Small graphics library that draws the simulated pedal. |
 | **CMake** | Build tool — decides which files to compile and what to link together. |
+| **DaisySP** (one file) | Electrosmith's DSP library. Only its ReverbSc reverb, from the LGPL-2.1 DaisySP-LGPL part, is used; CMake downloads it. |
 
 **File map**
 
@@ -46,11 +47,11 @@ vocal-fx-processor/
 ├── docs/                       This guide and the User Guide
 ├── .agents/skills/             Agent runbook, reference notes and build scripts
 ├── include/
-│   ├── demonic_engine.hpp      The DSP engine's "interface": class + preset struct   [implemented]
-│   ├── sim_controls.hpp        Simulator: the 11 encoders as data (range, step, display, presets)
+│   ├── demonic_engine.hpp      The DSP engine's "interface": class, its long-buffer memory, preset struct [implemented]
+│   ├── sim_controls.hpp        Simulator: the 12 encoders as data (range, step, display, presets)
 │   ├── sim_layout.hpp          Simulator: enclosure geometry, hit-testing, mouse-drag knob turning
-│   ├── hw_pinout.hpp           Planned hardware wiring: Daisy Seed pins for OLED, LEDs, encoders, footswitches
-│   ├── engine_bench.hpp        Benchmark scenarios and timing loop, shared by daisy/ and pico/
+│   ├── hw_pinout.hpp           Planned hardware wiring: Daisy Seed pins and the I²C expander, for OLED, LEDs, encoders, footswitches
+│   ├── engine_bench.hpp        Benchmark scenarios and timing loop for daisy/
 │   ├── sim_font.hpp            Simulator: embedded DejaVu Sans Mono font (same as Phase Box)
 │   └── dsp_pipeline.hpp        EMPTY (0 bytes), not used by the build
 ├── src/
@@ -61,11 +62,9 @@ vocal-fx-processor/
 ├── daisy/
 │   ├── Makefile                Separate build for the Daisy Seed (needs libDaisy)
 │   └── main_daisy.cpp          Benchmark: how much real-time budget does the engine use on the Daisy Seed?
-├── pico/
-│   ├── CMakeLists.txt          Separate build for the Raspberry Pi Pico (needs the Pico SDK)
-│   └── main_pico.cpp           Benchmark: how much real-time budget does the engine use on the RP2350?
 ├── tests/
-│   ├── engine_dsp_test.cpp     Measures output frequencies: pitch shifter, sub-octave, bypass   [built, in ctest]
+│   ├── engine_dsp_test.cpp     Measures the sound: sample rates, pitch, harmony, echo, freeze, reverb, sub-octave, bypass [built, in ctest]
+│   ├── test_engine.hpp         TestEngine: an engine plus its memory, on the heap, for the tests
 │   ├── sim_controls_test.cpp   Simulator layout and encoder logic, headless                     [built, in ctest]
 │   ├── hw_pinout_test.cpp      Planned pin map: no clashes, right pin types, one encoder each   [built, in ctest]
 │   └── engine_smoke_test.cpp   OUT OF DATE: calls methods that no longer exist; not built (section 9)
@@ -288,12 +287,12 @@ They communicate **only** through a set of global `std::atomic` variables (the "
 
 ### 4.2 What happens in one audio block
 
-Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:43`), which:
+Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:44`), which:
 
-1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 52–57). This only updates the preset index the engine reports; the values themselves arrive through the encoder atomics in the next step (section 5.4).
-2. Copies every encoder value from the atomics into the engine via setters (lines 59–71). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
-3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 73–78).
-4. Copies the output into the oscilloscope ring buffer (lines 80–85) and publishes the mic peak (line 90).
+1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 53–58). This updates the preset index the engine reports and the preset fields that have no encoder (harmony); the other values arrive through the encoder atomics in the next step (section 5.4).
+2. Copies every encoder value from the atomics into the engine via setters (lines 60–73). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
+3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 75–80).
+4. Copies the output into the oscilloscope ring buffer (lines 82–87) and publishes the mic peak (line 92).
 5. Returns `paContinue` ("keep going").
 
 ### 4.3 Design decisions worth knowing
@@ -301,8 +300,8 @@ Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:43`), which:
 - **The engine knows nothing about PortAudio or raylib.** `DemonicEngine` takes in a float array and fills a float array. That is why it can be tested headlessly (section 9) and is the part meant to be reused on the Daisy Seed.
 - **Everything is allocated up front.** No `new`, no `malloc`, no `std::vector` growth in the audio path — required for real-time safety and for microcontrollers.
 - **Control values are copied in once per block**, not per sample. Cheap, but it means parameter changes are "steppy" (see section 10.10).
-- **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE);`, `main_desktop.cpp:22`). Both threads can see it, but by convention only the audio thread touches its state. The UI thread only calls `getPreset()` and `getPresetCount()`, which read data that never changes after construction.
-- **Memory footprint:** `sizeof(DemonicEngine)` is about **182 KB** (186,824 bytes measured), almost all of it the five buffers.
+- **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE, engineMemory);`, `main_desktop.cpp:23`), with its long buffers in another global, `engineMemory` (line 22). Both threads can see it, but by convention only the audio thread touches its state. The UI thread only calls `getPreset()` and `getPresetCount()`, which read data that never changes after construction.
+- **Memory footprint:** `DemonicEngine` is about **410 KB**, almost all of it the ReverbSc reverb (~396 KB) plus the pitch and chorus buffers (8 KB each). `DemonicEngineMemory` adds about **576 KB**: the 2 s echo and the 1 s freeze loop. They are separate so the Daisy Seed can keep the engine in fast SRAM and the long buffers in SDRAM (section 11).
 
 ---
 
@@ -316,10 +315,11 @@ The app is split the way the Phase Box simulator is: pure logic in headers with 
 | `include/sim_layout.hpp` | `simlayout::Layout::make()`: where the enclosure, OLED, group panels, encoders, footswitches, LEDs and jacks are. Hit-testing and overlap helpers, `clicks_from_wheel`, and `KnobDrag` (turning a knob with the mouse: drag round the ring, or up/down from the centre). |
 | `include/sim_font.hpp` | DejaVu Sans Mono, embedded so text looks the same on every machine. |
 
-### 5.1 Globals (lines 22–32)
+### 5.1 Globals (lines 22–33)
 
 ```cpp
-DemonicEngine demonic(SAMPLE_RATE);
+DemonicEngineMemory engineMemory;                  // the engine's long buffers (~576 KB)
+DemonicEngine demonic(SAMPLE_RATE, engineMemory);
 
 std::atomic<bool>  guiBypass(false);        // true bypass: dry signal only, effects off
 std::atomic<float> guiParam[PARAM_COUNT];   // one per encoder, indexed by simctl::Param
@@ -332,11 +332,11 @@ float scopeBuffer[SCOPE_SIZE] = {0};
 std::atomic<size_t> scopeHead(0);
 ```
 
-One atomic per encoder, in an array indexed by `simctl::Param` (`guiParam[simctl::P_DRIVE]` and so on), so the drawing and input code can loop over all eleven. `main()` sets them from preset 0 (pitch 0) before audio starts. The **scope buffer** is a 128-sample circular buffer the audio thread fills with output samples; the UI reads it to draw the waveform. `scopeHead` is how many samples have been written so far (it grows without bound; reads wrap it with `% SCOPE_SIZE`).
+One atomic per encoder, in an array indexed by `simctl::Param` (`guiParam[simctl::P_DRIVE]` and so on), so the drawing and input code can loop over all twelve. `main()` sets them from preset 0 (pitch 0) before audio starts. The **scope buffer** is a 128-sample circular buffer the audio thread fills with output samples; the UI reads it to draw the waveform. `scopeHead` is how many samples have been written so far (it grows without bound; reads wrap it with `% SCOPE_SIZE`).
 
-**`selectPreset(idx)`** (line 36) runs on the UI thread: it copies the preset's values into the encoder atomics (pitch is not part of a preset and keeps its value), then stores the new index. Values first, index second, so the callback never sees the new preset with the old values.
+**`selectPreset(idx)`** (line 37) runs on the UI thread: it copies the preset's values into the encoder atomics (pitch is not part of a preset and keeps its value), then stores the new index. Values first, index second, so the callback never sees the new preset with the old values.
 
-### 5.2 The audio callback (lines 43–92)
+### 5.2 The audio callback (lines 44–94)
 
 The signature is dictated by PortAudio; you cannot change it. The parts you care about are `inputBuffer`, `outputBuffer`, and `framesPerBuffer`. The first thing it does is cast the generic `void*` buffers to `float*` (since the stream was opened with `paFloat32`):
 
@@ -347,7 +347,7 @@ float* out = static_cast<float*>(outputBuffer);
 
 The preset check uses a `static` local, `lastPreset`, which persists across calls so the callback can detect a *change*. Then every parameter is pushed into the engine, then the block is processed.
 
-### 5.3 `main()` setup (lines 275–309)
+### 5.3 `main()` setup (lines 277–311)
 
 1. Pitch to 0 and `selectPreset(0)`, so the encoders hold preset 0's values before the callback first reads them.
 2. `Pa_Initialize()` starts PortAudio.
@@ -358,18 +358,18 @@ The preset check uses a `static` local, `lastPreset`, which persists across call
 
 Error handling is by return code, not exceptions: functions return `paNoError` on success and `main` prints and exits otherwise.
 
-### 5.4 The UI loop (lines 311–431)
+### 5.4 The UI loop (lines 313–433)
 
 Each frame:
 
 1. **Keys:** `P` calls `selectPreset` with the next index; `F` toggles `guiSpectralFreeze` (ignored while bypassed); `B` or `Space` toggles `guiBypass` (and clears `guiSpectralFreeze` when switching bypass on). The footswitches call the same lambdas.
 2. **Mouse:** a press on an encoder starts a `KnobDrag`; while the button is held, the degrees turned move a 0..1 ring position (`drag_pos`) by `degrees / 270`, and `simctl::from_norm` turns that into the value stored in `guiParam`. Keeping `drag_pos` separately means PITCH's snap-to-zero does not trap the knob at 0. Scrolling over an encoder turns it by whole clicks (`simctl::step`, which lands on multiples of the step and stops at the ends). A press on a footswitch acts immediately.
-3. **OLED** (`render_oled`, line 248), drawn at its real 128×64 resolution into the off-screen texture: border, a header (preset number and name, or for 1.5 s after an encoder moves, that encoder's name and value), `BYPASS` or `FREEZE` under the header when active, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to the display; grey while bypassed, red while frozen), and the mic-level bar.
+3. **OLED** (`render_oled`, line 250), drawn at its real 128×64 resolution into the off-screen texture: border, a header (preset number and name, or for 1.5 s after an encoder moves, that encoder's name and value), `BYPASS` or `FREEZE` under the header when active, the waveform (127 line segments between consecutive `scopeBuffer` samples, clamped to the display; grey while bypassed, red while frozen), and the mic-level bar.
 4. **The pedal:** enclosure with screws and title, jacks and USB port (decorative), the OLED texture scaled 3× with its bezel, the three group panels, each encoder (`draw_encoder`: LED ring with the lit arc from `simctl::origin_degrees` to `simctl::degrees`, red past `warn_above`; a knurled cap that turns with the value; label and value under it), then the footswitch LEDs (preset flash, freeze red, bypass green while effects are on) and footswitches.
 
 This style is called **immediate-mode UI**: there are no button or knob objects. Every frame the code asks "is the mouse over this circle and pressed?", acts on the answer, and draws it. Only the geometry (`Layout`) and value logic (`simctl`) live outside the loop, which is what lets the tests check them without a window.
 
-### 5.5 Shutdown (lines 433–440)
+### 5.5 Shutdown (lines 435–442)
 
 Unload the texture and fonts, close the window, stop and close the audio stream, terminate PortAudio.
 
@@ -379,15 +379,19 @@ Unload the texture and fonts, close the window, stop and close the audio stream,
 
 ### 6.1 The header (`include/demonic_engine.hpp`)
 
-**`VocalPreset`** — a plain struct of ten numbers plus a name.
+**`VocalPreset`** — a plain struct of thirteen numbers plus a name.
+
+**`DemonicEngineMemory`** — the engine's long buffers, `echo` (2 s at 48 kHz) and `freeze` (1 s + 20 ms). The caller creates it and passes it to the constructor, so it can decide where it lives: a plain global on the desktop, the SDRAM on the Daisy Seed (section 11). It is about 576 KB, so never a local variable.
 
 **`DemonicEngine`** — the public interface:
 
 | Method | Purpose |
 |---|---|
-| `DemonicEngine(float sampleRate)` | Create the engine; zero buffers; define presets |
+| `DemonicEngine(float sampleRate, DemonicEngineMemory& memory)` | Create the engine; convert lengths and coefficients for the sample rate; zero buffers; define presets |
 | `processBlock(in, out, n)` | The workhorse: process `n` samples |
 | `setDrive`, `setSubOctaveBlend`, `setRobotBlend`, `setRobotFreq`, `setWavefold`, `setDecimation`, `setDelayFeedback`, `setDelayMix`, `setReverbMix`, `setMix` | Plain setters: store a value in a member |
+| `setDelayTime(float seconds)` | Echo time, 0.02–2 s (`kMinDelayTime`, `kMaxDelayTime`); the echo glides to it |
+| `setHarmony(float cents, float blend)` | Harmony voice, `cents` from the pitch-shifted voice, mixed at `blend` (0 = off). Section 6.7 |
 | `setSpectralFreeze(bool)` / `isSpectralFrozen()` | Freeze control (refused while bypassed) |
 | `setBypass(bool)` / `isBypassed()` | True bypass: exact pass-through with all effect memory cleared. Section 6.9 |
 | `setPitchShift(float cents)` | Pitch shift, −1200…+1200 cents (100 cents = 1 semitone); 0 bypasses the shifter. `setFormantShift` is kept as a deprecated alias that forwards to it |
@@ -396,16 +400,17 @@ Unload the texture and fonts, close the window, stop and close the audio stream,
 **Private state** falls into three groups:
 
 - **Parameters** (`driveDb`, `subBlend`, `robotBlend`, …) — set from outside. These survive a bypass untouched.
-- **Per-stage memory** (`subDetLP1`, `subDetLP2`, `subDetEnv`, `subArmed`, `subToggle`, `subFilterState`, `lowpassState`, `ringModPhase`, `heldSample`, `decimationCounter`, `dcInPrev`, `dcOutPrev`, `inputEnvelope`, `pitchPhase`, `pitchBlend`) — what each effect must remember from one sample to the next.
-- **Buffers** — five fixed arrays:
+- **Rate-dependent constants** (`pitchWindow`, `chorusDelay`, `echoLen`, `freezeLoopLen`, …, and the one-pole coefficients `envCoef`, `toneCoef`, `dcPole`, …) — set once in the constructor from values tuned at 44.1 kHz (section 6.4).
+- **Per-stage memory** (`subDetLP1`, `subDetLP2`, `subDetEnv`, `subArmed`, `subToggle`, `subFilterState`, `lowpassState`, `ringModPhase`, `heldSample`, `decimationCounter`, `dcInPrev`, `dcOutPrev`, `inputEnvelope`, `pitchPhase`, `pitchBlend`, `harmonyPhase`, `harmonyLevel`, `echoDelaySamples`, the freeze positions) — what each effect must remember from one sample to the next.
+- **Buffers** — sized for 48 kHz (`kMaxSampleRate`); at 44.1 kHz the ring lengths are shorter, so the times stay the same:
 
-| Buffer | Size | Duration at 44.1 kHz | Used by |
-|---|---|---|---|
-| `pitchBuffer` | 2,048 | 46 ms | Pitch shifter (uses up to 1,768 of it) |
-| `delayLine` | 2,048 | 46 ms | Chorus |
-| `feedbackDelayBuffer` | 22,050 | 500 ms | Echo and Freeze capture |
-| `freezeBuffer` | 4,096 | 93 ms | Freeze |
-| `reverbBuffer` | 16,384 | 371 ms | Reverb |
+| Buffer | Size | Duration | Lives in | Used by |
+|---|---|---|---|---|
+| `pitchBuffer` | 2,048 | 43 ms at 48 kHz | engine | Pitch shifter and harmony (the 40 ms sweep) |
+| `delayLine` | 2,048 | 43 ms at 48 kHz | engine | Chorus |
+| `reverb` (ReverbSc) | ~396 KB | — | engine | Reverb: 8 delay lines, read every sample |
+| `mem.echo` | 96,064 | 2 s | `DemonicEngineMemory` | Echo |
+| `mem.freeze` | 48,960 | 1 s + 20 ms | `DemonicEngineMemory` | Freeze: records the echo input, loops it when frozen |
 
 ### 6.2 Why effects need "memory"
 
@@ -422,21 +427,21 @@ head = 0
 
 def step(x):
     global head
-    delayed = buf[(head + K) % 22050]   # read from a position relative to the head
+    delayed = buf[(head - D) % 22050]   # read the sample written D samples ago
     buf[head] = x                       # write the new sample at the head
     head = (head + 1) % 22050           # advance, wrapping at the end
     return delayed
 ```
 
-When the head advances, it overwrites the oldest sample. A slot at offset *k* **ahead** of the head was last written `22050 − k` samples ago — which means the **delay time is `size − offset`**, not `offset`. This subtlety matters in section 10.5.
+When the head advances, it overwrites the oldest sample. Reading `D` slots *behind* the head gives a delay of `D` samples. (Reading `K` slots *ahead* of it, `(head + K) % size`, gives a delay of `size − K`, which is how the old echo and reverb were written and why their comments were wrong; section 10.5.) In C++, `%` on a negative number stays negative, so the engine adds `size` first, or uses `readDelayLinear()`, which also interpolates between samples for a fractional `D`.
 
-### 6.4 The constructor and presets (`demonic_engine.cpp:33–57`)
+### 6.4 The constructor and presets (`demonic_engine.cpp:49–94`)
 
-Sets all members, zero-fills the five buffers with `std::fill`, defines three presets using brace-initialisation (`presets[0] = {"DEMONIC GROWL", 11.0f, ...};` — values in the same order as the struct fields), and calls `loadPreset(0)`.
+Sets all members, then converts every length and coefficient for the sample rate. They were tuned at 44.1 kHz, so the code writes them that way: a chorus delay of `441.0f * sampleRate / kRefRate` samples (10 ms), and one-pole coefficients through `rateCoef(c, sampleRate)` = `1 − (1 − c)^(44100 / sampleRate)`, which keeps each filter's time constant. At 44.1 kHz nothing changes; at 48 kHz (the Daisy Seed) the effects sound the same. `test_same_sound_at_48k` checks it. Then it defines three presets using brace-initialisation (`presets[0] = {"DEMONIC GROWL", 11.0f, ...};` — values in the same order as the struct fields), calls `loadPreset(0)`, `resetState()` (which also initialises the ReverbSc) and clears the long buffers.
 
-`loadPreset(i)` (lines 108–120) copies the ten fields from `presets[i % 3]` into the live parameter members. The `% NUM_PRESETS` makes cycling wrap around.
+`loadPreset(i)` (lines 163–177) copies the thirteen fields from `presets[i % 3]` into the live parameter members. The `% NUM_PRESETS` makes cycling wrap around.
 
-### 6.5 `processBlock` stage by stage (`demonic_engine.cpp:130–304`)
+### 6.5 `processBlock` stage by stage (`demonic_engine.cpp:200–392`)
 
 Before the loop, two values are computed once per block:
 
@@ -445,23 +450,24 @@ float gainMultiplier = std::pow(10.0f, driveDb / 20.0f);        // dB → linear
 int decimationStep   = std::max(1, static_cast<int>(decimationFactor));
 ```
 
-Then a `for` loop handles each sample `input[i]` through the gate, the pitch shifter, and ten numbered stages, in this order:
+Then a `for` loop handles each sample `input[i]` through the gate, the pitch shifter and harmony, and ten numbered stages, in this order:
 
 | # | Lines | Stage | What the code does |
 |---|---|---|---|
-| gate | 151–152 | **Noise gate** | `activeSignal = abs(dry) > 0.02 ? dry : 0`. Anything quieter than 0.02 (−34 dBFS) is zeroed. Also updates `inputEnvelope`, a smoothed loudness meter (a one-pole filter on `abs(activeSignal)`). |
-| 0b | 154–176 | **Pitch shifter** | One read tap sweeps back through `pitchBuffer`, reading the audio faster or slower than it was written (that is what changes the pitch). A second tap covers for it while the first jumps back at the end of each sweep. Faded in and out over about 10 ms so switching it on or off does not click. Details in section 6.7. |
-| 1 | 178–193 | **Chorus doubler** | Writes the gated signal into `delayLine`. A 0.5 Hz sine LFO modulates a read position around 441 samples (10 ms) ± 66 samples. It reads between two neighbouring samples with **linear interpolation** (`a*(1-frac) + b*frac`) because the position is fractional. Adds 30% of that copy to the voice. |
-| 2 | 195–224 | **Sub-octave** | A Schmitt-trigger octave divider: watches a low-passed copy of the voice, flips a square wave on each rising edge (once per cycle, so the square runs at half the frequency), smooths it (one-pole at about 290 Hz) and scales it by the voice's loudness (`inputEnvelope`) and `subBlend`. Details in section 6.8. |
-| 3 | 226–234 | **Ring modulation** | An oscillator at `robotFreq + 40 × inputEnvelope` Hz (`ringModPhase` is the oscillator's angle in radians, wrapped at 2π). `wet` is crossfaded between the clean signal and `wet × sin(phase) × 1.5` by `robotBlend`. |
-| 4 | 236–243 | **Drive and wavefold** | `wet = tanh(wet × gainMultiplier)` is the saturation. If `wavefoldDrive > 0.1`, a triangle fold is applied and mixed in at weight `0.4 × wavefoldDrive`. |
-| 5 | 245–253 | **Decimation** | A counter selects every Nth sample to "hold" (`heldSample`); in-between samples repeat it. Then `round(wet × 32) / 32` quantises to about 6 bits. |
-| 6 | 255–257 | **Tone filter** | One-pole low-pass, `a = 0.35` → roughly 3 kHz cutoff at 44.1 kHz. |
-| 7 | 259–266 | **Spectral freeze** | If active, reads `freezeBuffer` in a loop and mixes it 70/30 with live signal. |
-| 8 | 268–276 | **Feedback delay** | Reads from `feedbackDelayBuffer`, writes `wet + delayed × delayFeedback` back in, and crossfades the output by `delayMix`. |
-| 9 | 278–288 | **"Catacomb" reverb** | Two tap reads from `reverbBuffer` (weights 0.6 and 0.4), written back with 0.55 feedback; crossfaded by `reverbMix`. |
-| 10 | 290–294 | **DC blocker** | `y = x − x_prev + 0.995 × y_prev`. A classic high-pass at a few Hz. |
-| mix | 296–302 | **Wet/dry mix, then bypass crossfade** | `processed = dry × (1 − mix) + wet × mix`. Note `dry` is the *ungated* input. Then `output = processed × (1 − bypassBlend) + dry × bypassBlend`, where `bypassBlend` ramps between 0 and 1 over 5 ms (section 6.9). |
+| gate | 225–226 | **Noise gate** | `activeSignal = abs(dry) > 0.02 ? dry : 0`. Anything quieter than 0.02 (−34 dBFS) is zeroed. Also updates `inputEnvelope`, a smoothed loudness meter (a one-pole filter on `abs(activeSignal)`). |
+| 0b | 228–240 | **Pitch shifter** | One read tap sweeps back through `pitchBuffer`, reading the audio faster or slower than it was written (that is what changes the pitch). A second tap covers for it while the first jumps back at the end of each sweep (both in `pitchTap()`). Faded in and out over about 10 ms so switching it on or off does not click. Details in section 6.7. |
+| 0c | 241–249 | **Harmony** | A second `pitchTap()` sweep over the same buffer, `harmonyCents` above or below the shifted voice, added at `harmonyLevel` (faded like the shifter). Skipped while off. |
+| 1 | 251–266 | **Chorus doubler** | Writes the gated signal into `delayLine`. A 0.5 Hz sine LFO modulates a read position around 10 ms ± 1.5 ms (`chorusDelay`, `chorusSwing`). It reads between two neighbouring samples with **linear interpolation** (`a*(1-frac) + b*frac`) because the position is fractional. Adds 30% of that copy to the voice. |
+| 2 | 268–297 | **Sub-octave** | A Schmitt-trigger octave divider: watches a low-passed copy of the voice, flips a square wave on each rising edge (once per cycle, so the square runs at half the frequency), smooths it (one-pole at about 290 Hz) and scales it by the voice's loudness (`inputEnvelope`) and `subBlend`. Details in section 6.8. |
+| 3 | 299–307 | **Ring modulation** | An oscillator at `robotFreq + 40 × inputEnvelope` Hz (`ringModPhase` is the oscillator's angle in radians, wrapped at 2π). `wet` is crossfaded between the clean signal and `wet × sin(phase) × 1.5` by `robotBlend`. |
+| 4 | 309–319 | **Drive and wavefold** | `wet = tanh(wet × gainMultiplier)` is the saturation. If `wavefoldDrive > 0.1`, a triangle fold is applied and mixed in at weight `0.4 × wavefoldDrive`. |
+| 5 | 321–329 | **Decimation** | A counter selects every Nth sample to "hold" (`heldSample`); in-between samples repeat it. Then `round(wet × 32) / 32` quantises to about 6 bits. |
+| 6 | 331–333 | **Tone filter** | One-pole low-pass, `a = 0.35` at 44.1 kHz (`toneCoef`) → roughly 3 kHz cutoff. |
+| 7 | 335–351 | **Spectral freeze** | If active, plays the 1 s loop in `mem.freeze` (crossfaded at the seam) and mixes it 70/30 with the live signal. Section 6.6. |
+| 8 | 353–368 | **Feedback delay** | Glides `echoDelaySamples` towards the ECHO TIME setting, reads `mem.echo` that far behind the head (interpolated), writes `tanh(wet + delayed × delayFeedback)` back in (and into the freeze ring unless frozen), and crossfades the output by `delayMix`. |
+| 9 | 370–375 | **"Catacomb" reverb** | DaisySP's `ReverbSc` (8 modulated, damped delay lines; feedback 0.85, damping 5 kHz), fed `wet` on both inputs; its left output is crossfaded in by `reverbMix`. Skipped if it could not initialise (above about 48 kHz). |
+| 10 | 377–381 | **DC blocker** | `y = x − x_prev + 0.995 × y_prev` (`dcPole` at other rates). A classic high-pass at a few Hz. |
+| mix | 383–390 | **Wet/dry mix, then bypass crossfade** | `processed = dry × (1 − mix) + wet × mix`. Note `dry` is the *ungated* input. Then `output = processed × (1 − bypassBlend) + dry × bypassBlend`, where `bypassBlend` ramps between 0 and 1 over 5 ms (section 6.9). |
 
 #### The one-pole filter, in Python
 
@@ -475,7 +481,7 @@ def one_pole(state, x, a):
 #   a = 0.04 → ≈ 290 Hz   (sub filter)
 ```
 
-In C++ the state is a member variable and the assignment is `lowpassState = lowpassState + 0.35f * (wet - lowpassState);` — identical.
+In C++ the state is a member variable and the assignment is `lowpassState = lowpassState + toneCoef * (wet - lowpassState);` — identical, with `toneCoef` = 0.35 at 44.1 kHz. The cutoff formula shows why `a` depends on the sample rate: for the same cutoff at 48 kHz, `a` must be slightly smaller, which is what `rateCoef()` computes.
 
 #### Mixing, crossfades and "wet" vs "dry"
 
@@ -483,7 +489,9 @@ In C++ the state is a member variable and the assignment is `lowpassState = lowp
 
 ### 6.6 Spectral freeze details
 
-`setSpectralFreeze(true)` (lines 92–106) — only on the *off → on* transition — copies 4,096 samples out of `feedbackDelayBuffer` starting at the write head into `freezeBuffer` and resets the read position. Because the write head points at the **oldest** data, this captures audio from roughly 0.41–0.5 s ago, not the most recent audio. Playback then loops those 4,096 samples (a ~93 ms loop, ≈ 10.8 repetitions per second).
+`mem.freeze` is a ring of 1 s + 20 ms that stage 8 keeps writing with the echo input, so it always holds the most recent second. `setSpectralFreeze(true)` (lines 148–157) — only on the *off → on* transition — copies nothing: it notes the ring's oldest sample (`freezeStart`), and stage 8 stops writing. Pressing Freeze therefore costs no time, which matters when the ring is in slow SDRAM.
+
+Playback loops the newest second. A plain loop would jump from the end of the recording back to its start, a click once a second. Instead the last 20 ms of the loop fade into the 20 ms recorded just *before* the loop's start, so when the loop wraps, the next sample is the one that originally followed: no jump. `test_freeze_loop` checks the 1 s period and that the step at the seam is no larger than elsewhere.
 
 ### 6.7 The pitch shifter
 
@@ -494,7 +502,7 @@ In C++ the state is a member variable and the assignment is `lowpassState = lowp
 ratio = 2 ** (cents / 1200)                  # 0.5 = octave down, 2.0 = octave up
 phase += (1 - ratio) / WINDOW                # how far the read position slides each sample
 phase -= floor(phase)                        # wrap into [0, 1): that is the "jump back"
-delay = 2 + phase * WINDOW                   # in samples; WINDOW is 1764 (40 ms)
+delay = 2 + phase * WINDOW                   # in samples; WINDOW is 40 ms (1764 at 44.1 kHz)
 out = read_with_interpolation(buffer, write_head - delay)
 ```
 
@@ -508,12 +516,14 @@ out = read_with_interpolation(buffer, write_head - delay)
 |---|---|
 | Latency | The delay sweeps between about 0 and 40 ms, so the shifted voice is on average ~20 ms behind your dry voice. The shifter is fully bypassed (no delay) when the pitch is 0. |
 | Accuracy | On a voice-like test signal every shift tested was within about 6 cents. On a pure sine it is within about 20 cents up to ±1 octave, 40 at the extreme. Pure tones are the worst case because they lock onto the sweep rate. |
-| Character | A faint flutter or tick at the sweep rate, which is `abs(1 − ratio) × 44100 / 1764` Hz: about 6 Hz at −5 semitones and 25 Hz at ±1 octave. Larger shifts sound rougher. |
+| Character | A faint flutter or tick at the sweep rate, which is `abs(1 − ratio) / 0.04 s` Hz: about 6 Hz at −5 semitones and 25 Hz at ±1 octave. Larger shifts sound rougher. |
 | Formants | The whole spectrum moves, so it does **not** preserve formants. Big shifts sound like a different-sized voice, not the same voice at another pitch. A formant-preserving shifter would need a spectral or PSOLA-style design. |
 | Cost | Two interpolated buffer reads per sample, one `cos` only during the crossfades, one `pow` per block. See section 11. |
 | Switching | `pitchBlend` ramps between 0 and 1 (about 10 ms) when the pitch moves to or from 0, so the bypass boundary does not click. The whole stage is skipped, costing nothing, while bypassed. |
 
-The sweep length (`kPitchWindow`) and the crossfade fraction (`kPitchFade`) are named constants at the top of `demonic_engine.cpp`. Longer windows handle lower voices better but add latency; a smaller crossfade gives a cleaner pitch with harder splices.
+The sweep length (`kPitchWindowSec`, converted to `pitchWindow` samples) and the crossfade fraction (`kPitchFade`) are named constants at the top of `demonic_engine.cpp`. Longer windows handle lower voices better but add latency; a smaller crossfade gives a cleaner pitch with harder splices.
+
+**Harmony.** `pitchTap(phase)` holds the two-tap read and crossfade, so a second voice costs one more call: stage 0c keeps its own `harmonyPhase` and sweeps it at `2^((pitchCents + harmonyCents) / 1200)`. The harmony is therefore relative to the shifted voice (a fifth above stays a fifth above whatever PITCH does). It has the same flutter and formant behaviour, and is faded in and out with the shifter's coefficient. On a pure sine, the harmony's fifth measures about 70 % as strong as the main shifter's own +700-cent output (`test_harmony`).
 
 ### 6.8 The sub-octave detector
 
@@ -548,6 +558,7 @@ The Schmitt-trigger pattern (an "armed" flag and a threshold on each side) means
    ```cpp
    if (bypassTarget && bypassBlend >= 1.0f) {
        if (!bypassStateCleared) { resetState(); bypassStateCleared = true; }
+       clearLongBuffers(numFrames * kClearPerFrame);   // a slice per block (point 3)
        for (size_t i = 0; i < numFrames; ++i) output[i] = input[i];
        return;                                  // no DSP at all: also saves CPU
    }
@@ -555,9 +566,9 @@ The Schmitt-trigger pattern (an "armed" flag and a threshold on each side) means
 
 2. **It does not click.** Switching mid-note would otherwise jump instantly between two different waveforms. Instead, `bypassBlend` slides linearly between 0 (effects) and 1 (dry) over 5 ms, and the final line of the sample loop blends the two. A linear ramp (not an exponential one) matters: it reaches exactly 1.0, so the exact pass-through above can take over cleanly.
 
-3. **It wipes the effects' memory once.** `resetState()` zeroes every buffer (echo, reverb, chorus, pitch, freeze) and every filter and detector variable, but not the *parameters*, so your encoder settings are all still there when you switch back. Without this wipe, switching bypass off would replay up to half a second of audio from before the bypass. A useful side effect: **bypass is a panic button**. A runaway echo loop (Delay Feedback above 1.0, issue 10.2) is flushed by a single bypass cycle; the test confirms a loop that had reached 74× full scale is silent afterwards. It also clears any NaN or infinity stuck in the loop.
+3. **It wipes the effects' memory.** `resetState()` zeroes the short buffers (chorus, pitch) and every filter and detector variable, and re-initialises the ReverbSc (which clears it), but not the *parameters*, so your encoder settings are all still there when you switch back. The long echo and freeze buffers (about 576 KB, in slow SDRAM on the Daisy Seed) would take several blocks' worth of time to clear at once, so `clearLongBuffers()` clears 64 samples per frame of each bypassed block, about 50 ms in all; if bypass is released before it finishes, the rest is cleared at once. Without this wipe, switching bypass off would replay up to two seconds of audio from before the bypass. A useful side effect: **bypass is a panic button**. A runaway echo loop (Delay Feedback above 1.0, issue 10.2) is flushed by a single bypass cycle; the test confirms a loop that had reached 74× full scale is silent afterwards. It also clears any NaN or infinity stuck in the loop.
 
-   The wipe happens once per bypass period (`bypassStateCleared`), not every block, so it costs nothing while bypassed.
+   `resetState()` runs once per bypass period (`bypassStateCleared`), and the slices stop once the buffers are clear, so it costs nothing while bypassed after that.
 
 **Freeze and bypass.** A frozen loop lives in a buffer that the wipe clears, so Freeze is switched off by `setBypass(true)`, and `setSpectralFreeze(true)` is ignored while bypassed. The desktop app mirrors this: its bypass handler also clears `guiSpectralFreeze`, and the `F` key and freeze button do nothing while bypassed. Without that mirroring, the callback would re-assert the old freeze flag every block and "freeze" an empty buffer the moment bypass ended.
 
@@ -569,15 +580,16 @@ The Schmitt-trigger pattern (an "armed" flag and a threshold on each side) means
 
 ## 7. The build system (`CMakeLists.txt`)
 
-CMake describes your project as a set of **targets** (things to build) and the **dependencies** between them, much as a Python project has packages and imports. The file defines three targets, plus the options that control them:
+CMake describes your project as a set of **targets** (things to build) and the **dependencies** between them, much as a Python project has packages and imports. The file defines four targets, plus the options that control them:
 
 | Target | What it is | Depends on |
 |---|---|---|
-| `demonic_engine` | A static library built from `src/demonic_engine.cpp`. The DSP code, with no audio or graphics. | nothing |
+| `daisysp_reverbsc` | A static library of one file, DaisySP-LGPL's `Effects/reverbsc.cpp` (LGPL-2.1). | DaisySP, fetched |
+| `demonic_engine` | A static library built from `src/demonic_engine.cpp`. The DSP code, with no audio or graphics. | `daisysp_reverbsc` |
 | `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test` | The test programs in `tests/` (the `foreach` in `CMakeLists.txt` lists them). | `demonic_engine` |
 | `vocal_desktop` | The desktop app. | `demonic_engine`, PortAudio, raylib (plus Apple system frameworks on macOS) |
 
-Splitting the engine into its own library is what lets the tests, the desktop app, and the board benchmarks (`daisy/`, `pico/`) all share one copy of the DSP code.
+Splitting the engine into its own library is what lets the tests and the desktop app share one copy of the DSP code; the Daisy benchmark (`daisy/`) compiles the same source files.
 
 ### Options
 
@@ -593,13 +605,14 @@ Release (optimised) is the default build type, since real-time DSP needs it. Pas
 
 - **PortAudio**, in order: (1) `pkg-config` (`portaudio-2.0`); (2) a manual search that includes both `/opt/homebrew` (Homebrew on Apple Silicon) and `/usr/local` (Homebrew on Intel Macs and most Linux installs); (3) the copy in `./portaudio`, built from source, if it exists. If none of these succeeds, configuration stops with a message saying how to install it.
 - **raylib:** downloaded and built from source by CMake's `FetchContent` (needs internet on the first configure), unless `USE_SYSTEM_RAYLIB` is ON.
+- **DaisySP:** cloned by `FetchContent` at a pinned commit, with its `DaisySP-LGPL` submodule (`SOURCE_SUBDIR no-cmake` stops CMake from building all of DaisySP). Offline, point it at a local clone: `-DFETCHCONTENT_SOURCE_DIR_DAISYSP=/path/to/DaisySP`; the helper scripts do this for `/Users/ww/src/DaisySP` (or `DAISYSP_DIR`) when it exists. This is why the minimum CMake is 3.18.
 - **macOS frameworks** (`CoreAudio`, `Cocoa`, `OpenGL`, and so on) are linked only `if(APPLE)`, so the file no longer breaks other platforms at that step.
 
 ### Version numbers and releases
 
 Every merge to `main` is a release. `.github/workflows/release.yml` (logic in `.github/scripts/release.sh`) tags the merge commit `vX.Y.Z` and publishes a [GitHub Release](https://github.com/wsjk/-vocal-fx-processor/releases) whose notes list the merged PRs by title. Those notes are the project's changelog. The bump is a patch (0.1.0 → 0.1.1) unless the PR has a `minor` or `major` label; `.github/release.yml` groups the notes by the same labels. The first release is v0.1.0.
 
-`cmake/version.cmake`, included by both this file and `pico/CMakeLists.txt`, sets `VFX_VERSION` from `git describe` when CMake configures: `0.3.0` on a release commit, `0.3.0-2-gabc1234` two commits later, with `-dirty` for uncommitted changes, and `0.0.0-g<sha>` before the first tag. The desktop window title and the Pico benchmark's banner show it. Re-run `cmake` to pick up a new commit or tag.
+`cmake/version.cmake` sets `VFX_VERSION` from `git describe` when CMake configures: `0.3.0` on a release commit, `0.3.0-2-gabc1234` two commits later, with `-dirty` for uncommitted changes, and `0.0.0-g<sha>` before the first tag. `daisy/Makefile` applies the same rules. The desktop window title and the Daisy benchmark's banner show it. Re-run `cmake` to pick up a new commit or tag.
 
 ### Common commands
 
@@ -617,7 +630,7 @@ With CMake 4 or newer, raylib 5.0's own `CMakeLists.txt` may refuse to configure
 
 > **Verification status.** The full CMake build (engine, `engine_dsp_test`, `sim_controls_test`, and `vocal_desktop` with PortAudio and the downloaded raylib) has been built on macOS, and both tests pass there. The engine and tests also build and pass on Linux with g++. The desktop app is untested on Linux and Windows.
 
-The Daisy Seed build (`daisy/Makefile`, needs libDaisy) and the previous board's RP2350 build (`pico/CMakeLists.txt`, needs the Pico SDK) are **separate** projects, because each needs its own SDK and an Arm cross-compiler; see section 11.
+The Daisy Seed build (`daisy/Makefile`, needs libDaisy and a DaisySP clone) is a **separate** project, because it needs libDaisy and an Arm cross-compiler; see section 11.
 
 ---
 
@@ -625,7 +638,7 @@ The Daisy Seed build (`daisy/Makefile`, needs libDaisy) and the previous board's
 
 ### 8.1 Add a new parameter (worked example: tone-filter brightness)
 
-Right now the tone filter's coefficient `0.35` is hard-coded (the `lowpassState = ...` line in stage 6, `demonic_engine.cpp:256`). Here is how to make it adjustable.
+Right now the tone filter's coefficient is fixed: `toneCoef`, 0.35 at 44.1 kHz, used by the `lowpassState = ...` line in stage 6 (`demonic_engine.cpp:332`). Here is how to make it adjustable.
 
 **1. Header — add the state and setter** (`include/demonic_engine.hpp`):
 
@@ -641,7 +654,8 @@ float toneCoeff;
 
 ```cpp
 // constructor initializer list (add:)   toneCoeff(0.35f),
-void DemonicEngine::setTone(float c) { toneCoeff = c; }
+// the value is given at 44.1 kHz, so convert it for the actual rate, as the constructor does for toneCoef:
+void DemonicEngine::setTone(float c) { toneCoeff = rateCoef(c, sampleRate); }
 
 // in processBlock, replace the stage 6 line:
 lowpassState = lowpassState + toneCoeff * (wet - lowpassState);
@@ -660,19 +674,19 @@ demonic.setTone(guiParam[P_TONE].load());
 guiParam[simctl::P_TONE].store(0.35f);
 ```
 
-The encoder is drawn, hit-tested and turned automatically: `Layout::make()` spaces every group's encoders evenly across its panel. The VOICE panel has room for a fourth; MANGLE and SPACE already have four each, so a fifth there would need a wider window. Run `ctest`: `sim_controls_test` checks that nothing overlaps.
+The encoder is drawn, hit-tested and turned automatically: `Layout::make()` spaces every group's encoders evenly across its panel. The VOICE panel has room for a fourth; MANGLE has four and SPACE five, both full. On the hardware every Seed GPIO is taken, so a new encoder goes on the MCP23017 expander: add it to `hwpins::ENCODERS` with `expander = true` (`hw_pinout_test` checks it). Run `ctest`: `sim_controls_test` checks that nothing overlaps.
 
 **4. (Optional) add it to presets** — add a `float tone;` field to `VocalPreset`, extend the three brace-initialiser lines (the values must stay in the declared order), copy it in `loadPreset`, and set `out[P_TONE]` in `simctl::preset_values` so loading a preset turns the encoder.
 
 ### 8.2 Add a preset
 
 1. In the header, change `static const int NUM_PRESETS = 3;` to `4`. (The array `VocalPreset presets[NUM_PRESETS]` is sized from it.)
-2. In the constructor, add `presets[3] = {"NEW NAME", ...ten numbers in field order...};`.
+2. In the constructor, add `presets[3] = {"NEW NAME", ...thirteen numbers in field order...};`.
 
 ### 8.3 Add a new effect stage
 
 1. Decide where it sits in the chain (order matters: effects before `tanh` get distorted; effects after it do not).
-2. Add any state it needs (a phase, a filter memory, a buffer) as private members and initialise them in the constructor, zeroing any arrays.
+2. Add any state it needs (a phase, a filter memory, a buffer) as private members and initialise them in the constructor, zeroing any arrays; zero them again in `resetState()` so bypass clears them. Give any length or filter coefficient at 44.1 kHz and convert it in the constructor (section 6.4). A long buffer (more than a few KB, read once per sample) belongs in `DemonicEngineMemory`, cleared by `clearLongBuffers()`.
 3. Insert the code inside the `for` loop in `processBlock`, working on the `wet` variable.
 4. Expose its controls with setters and encoders as in 8.1.
 5. If it needs a buffer, remember: fixed size, wrap indexes with `%`, and watch the Daisy Seed's memory budget (section 11).
@@ -695,12 +709,9 @@ cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
 ```
 
-(`.agents/skills/vocal-fx-processor/scripts/build_tests.sh` runs exactly these three steps.) Or directly with a compiler, from the repo root:
+(`.agents/skills/vocal-fx-processor/scripts/build_tests.sh` runs these three steps, pointing CMake at a local DaisySP clone if there is one.) The engine needs ReverbSc, so build the tests with CMake rather than one `g++` line; after the first configure, `cmake --build build-tests && ./build-tests/engine_dsp_test` is quick.
 
-```bash
-g++ -std=c++17 -O2 -Iinclude tests/engine_dsp_test.cpp src/demonic_engine.cpp -o dsp_test && ./dsp_test
-g++ -std=c++17 -Iinclude tests/sim_controls_test.cpp src/demonic_engine.cpp -o sim_test && ./sim_test
-```
+Each test creates its engine with `std::make_unique<TestEngine>(fs)` (`tests/test_engine.hpp`): an engine plus its `DemonicEngineMemory`, about 1 MB, on the heap rather than the stack.
 
 It prints a `[PASS]`/`[FAIL]` line per check, ends with `ALL TESTS PASSED (0 failures)`, and exits non-zero on any failure (which is how `ctest` knows).
 
@@ -714,6 +725,12 @@ Measures **frequencies in the output**, plus bypass behaviour:
 
 | Test | What it checks |
 |---|---|
+| Same sound at 48 kHz | At 44.1 and 48 kHz: the echo arrives after 200 ms, the tone filter passes 3 kHz at the same level (±0.5 dB), and −500 cents lands on the right note |
+| Echo time | A click comes back after the ECHO TIME setting (50 ms, 0.5, 1.5 and 2 s), within 1 ms |
+| Freeze loop | After a gliding tone, the frozen output repeats every 1.000 s, and the step at the loop seam is no larger than elsewhere |
+| Harmony | Off: no fifth. On (+700 cents): a fifth over 20× stronger and at least half as strong as the main shifter's; with PITCH −500 it moves to +200 cents |
+| Reverb | A short burst leaves a tail (0.3–0.8 s) that decays (5–6 s is under a tenth of it) |
+| Bypass, short | A runaway echo with bypass held for only 15 ms (before the long buffers finish clearing) is still silent afterwards |
 | Pitch shifter, pure sine | A 220 Hz sine shifted by −1200…+1200 cents lands within 60 cents of 220 × 2^(cents/1200) |
 | Pitch shifter, voice-like | A 150 Hz harmonic signal with vibrato and noise: the shifted fundamental stays within a factor of two of the strongest spectral component |
 | Pitch shifter, switching | Toggling it on and off mid-note stays finite, bounded, and free of large sample-to-sample jumps |
@@ -736,17 +753,17 @@ Checks the simulator without opening a window: the enclosure fits the window; th
 
 ### `hw_pinout_test.cpp`: does the planned wiring work?
 
-Checks `include/hw_pinout.hpp`, the planned pin map for the Daisy Seed (see [HARDWARE_PLAN.md](HARDWARE_PLAN.md)): every pin is D0–D30; none is used twice or takes the USB pins kept free (D0, D29, D30); SCL/SDA are I²C1 (D11, D12); the LED chain is on SPI1 MOSI (D10); and there is one encoder per `simctl` parameter.
+Checks `include/hw_pinout.hpp`, the planned pin map for the Daisy Seed (see [HARDWARE_PLAN.md](HARDWARE_PLAN.md)): every pin is D0–D30; none is used twice or takes the USB pins kept free (D0, D29, D30); SCL/SDA are I²C1 (D11, D12); the LED chain is on SPI1 MOSI (D10); there is one encoder per `simctl` parameter; and the MCP23017 expander's pins are GPA0–GPB7, unique, with ECHO TIME on it at a valid address that is not the OLED's.
 
-**Writing your own.** Use the helpers: `isolate(engine)` turns every optional effect off so only the one under test is audible; `render(engine, generator, seconds, keepSeconds)` feeds a signal in 64-sample blocks (the desktop app's block size) and returns the last part of the output; then assert on `magnitude_at` or `dominant_freq`.
+**Writing your own.** Use the helpers: `isolate(engine)` turns every optional effect off so only the one under test is audible; `render(engine, generator, seconds, keepSeconds)` feeds a signal in 64-sample blocks (the desktop app's block size) at 44.1 kHz and returns the last part of the output, and `render_at(engine, fs, generator, seconds)` does the same at any rate and returns all of it; then assert on `magnitude_at` or `dominant_freq`. Turning ECHO TIME glides, so let a new echo time settle (about a second) before measuring.
 
-**Ideas for further tests:** assert that peak output stays ≤ 1.0 once a limiter is added (issue 10.2); that Delay Feedback of 1.05 stays bounded over 60 seconds; that the wavefolder stays within ±1 (issue 10.4); render an impulse and check echo positions (issue 10.5); write the output to a WAV file and listen to it.
+**Ideas for further tests:** that Delay Feedback of 1.05 stays bounded at a 2 s echo time; write the output to a WAV file and listen to it.
 
 ---
 
 ## 10. Code review: known issues
 
-> **Status update.** Since the original review, issue **10.3** (no pitch shifting), issue **10.6** (unreliable sub-octave) and most of **10.8** (build portability) have been resolved; they are kept below, marked **RESOLVED**, as a record of what changed and why. Issue **10.1** (presets) was resolved with the pedal-style simulator, and **10.2** and **10.4** (output beyond full scale) with the suggested fixes. Issues **10.5, 10.7, 10.9** and the minor items in 10.10 are still open.
+> **Status update.** Since the original review, issue **10.3** (no pitch shifting), issue **10.6** (unreliable sub-octave) and most of **10.8** (build portability) have been resolved; they are kept below, marked **RESOLVED**, as a record of what changed and why. Issue **10.1** (presets) was resolved with the pedal-style simulator, **10.2** and **10.4** (output beyond full scale) with the suggested fixes, and **10.5** (echo and reverb timings) and **10.9** (freeze) with the Daisy Seed work. Issue **10.7** and the minor items in 10.10 are still open.
 
 Findings are ordered roughly by impact. Items marked **[measured]** were confirmed by compiling `DemonicEngine` on its own and feeding it synthetic test signals (sine waves and impulses) — they are facts about the code, though real voices will vary in degree. Items marked **[by inspection]** come from reading the code.
 
@@ -760,7 +777,7 @@ When the preset changed, `loadPreset()` copied the preset into the engine, and t
 
 **Now:** the echo is written back through `tanhf`, so above 1.0 it settles at a steady level instead of growing, and the mixed output is clamped to ±1 before the bypass crossfade. `test_extremes_stay_bounded` runs fold 5, drive 12 and feedback 1.05 for 60 s and checks the peak stays ≤ 1. The original analysis follows.
 
-`demonic_engine.cpp:273`. The DELAY FB encoder allows feedback up to 1.05 (its ring turns red above 1.0). With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
+`demonic_engine.cpp:360` (now). The DELAY FB encoder allows feedback up to 1.05 (its ring turns red above 1.0). With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
 
 *Mitigation already available:* pressing **Bypass** flushes the loop (section 6.9), so a runaway can be silenced with one keypress. It is a workaround, not a fix: the loop can still run away again.
 
@@ -780,7 +797,7 @@ The engine stored a "formant shift" value that no code ever read, and the displa
 
 **Now:** the floored modulo and clamped blend weight below are in the engine (with `floorf`/`fabsf`). The original analysis follows.
 
-`demonic_engine.cpp:241`:
+The original line (the fixed version is at `demonic_engine.cpp:314`):
 
 ```cpp
 folded = std::abs(std::fmod(folded + 1.0f, 4.0f) - 2.0f) - 1.0f;
@@ -800,7 +817,9 @@ float k = std::min(0.4f * wavefoldDrive, 1.0f);   // keep weights between 0 and 
 wet = wet * (1.0f - k) + folded * k;
 ```
 
-### 10.5 Comments and constants disagree with actual timings; the "reverb" is an echo — *medium* **[measured]**
+### 10.5 Comments and constants disagreed with actual timings; the "reverb" was an echo — **RESOLVED**
+
+**Now:** the echo reads `echoDelaySamples` *behind* the write head, set by the ECHO TIME control (20 ms–2 s, default 200 ms, the delay it really had), and `test_echo_time` checks the echo arrives on time. The reverb is DaisySP's ReverbSc, a diffuse 8-line design (`test_reverb_tail`). The original analysis follows.
 
 Because of the circular-buffer rule in 6.3 (*delay = size − offset*), the offsets chosen were treated as delay times when they are not:
 
@@ -832,9 +851,9 @@ In practice this "works" on common hardware (at worst a slightly torn waveform),
 
 **Still open:** Windows and the Linux desktop build are untested; the `portaudio/` folder remains git-ignored, so a fresh clone relies on an installed PortAudio; and `tests/engine_smoke_test.cpp` no longer compiles (section 9).
 
-### 10.9 Freeze behaviour — *low* **[by inspection]**
+### 10.9 Freeze behaviour — **RESOLVED**
 
-Freeze captures the *oldest* 4,096 samples in the 500 ms echo buffer (audio from roughly 410–500 ms ago), not the most recent audio, and loops them with no crossfade at the loop point, producing a ~11 Hz flutter and a click. A better design captures the *most recent* samples and crossfades the loop seam; a true "spectral" freeze would use an FFT and hold magnitudes while randomising phases.
+Freeze captured the *oldest* 4,096 samples in the 500 ms echo buffer (audio from roughly 410–500 ms ago), not the most recent audio, and looped them with no crossfade at the loop point, producing a ~11 Hz flutter and a click. **Now:** it loops the most recent second, with a 20 ms crossfade at the seam (section 6.6, `test_freeze_loop`). A true "spectral" freeze would still need an FFT, holding magnitudes while randomising phases.
 
 ### 10.10 Minor items
 
@@ -842,6 +861,8 @@ Freeze captures the *oldest* 4,096 samples in the 500 ms echo buffer (audio from
 - **Integer overflow.** `decimationCounter++` (`int`) will overflow after about 13.5 hours of continuous running (signed overflow is undefined behaviour in C++). Wrap it: `decimationCounter = (decimationCounter + 1) % decimationStep`.
 - **The noise gate has no hysteresis or release**, so quiet speech near the threshold chatters on and off.
 - **Mono only**, hard-wired to the default devices; no device selection or error recovery if a device disappears.
+- **Decimation is in samples**, so DECIMATE x3 holds every third sample at either rate: the crunch is about 9 % brighter at 48 kHz than at 44.1 kHz. Every other stage is rate-independent (section 6.4).
+- **Bypass re-initialises ReverbSc in one block** (it clears about 396 KB of SRAM, on the order of 0.1–0.4 ms on the Daisy Seed). The long SDRAM buffers are cleared in slices; if the benchmark shows the reverb's clear overrunning a block, split it the same way.
 - **Empty files** `dsp_pipeline.hpp/.cpp` are placeholders that nothing uses. Delete them or fill them in so newcomers aren't misled.
 - **Committed build leftovers.** `dsp_test` (a compiled test binary) and `project_dump.txt` (a text dump of the sources) are checked in. Neither is used by the build. Delete them and add `dsp_test` to `.gitignore`.
 - ~~No top-level README~~: there now is one (`README.md`), and it links to these guides.
@@ -850,7 +871,7 @@ Freeze captures the *oldest* 4,096 samples in the 500 ms echo buffer (audio from
 
 ## 11. Toward the Daisy Seed
 
-The hardware target is the **Electrosmith Daisy Seed 65MB**: an STM32H750 with one Cortex-M7 core at 480 MHz, a single- and double-precision FPU, an audio codec on the board, 512 KB AXI SRAM plus 64 MB SDRAM, 128 KB internal flash plus 8 MB QSPI, and 31 GPIO. It replaced the WeAct RP2350B Core (two Cortex-M33 cores at 150 MHz, 520 KB RAM, 48 GPIO), mainly because the RP2350B needed a separate WM8731 codec that made it cost about as much as a Daisy Seed; [HARDWARE_PLAN.md](HARDWARE_PLAN.md) has the comparison, audio design, pin map and shopping list. The first step of the port is not audio I/O but a go/no-go question: **can the board run the engine in real time at all?** `daisy/main_daisy.cpp` answers it by running the engine on synthetic input on the device and reporting how much of the real-time budget it uses.
+The hardware target is the **Electrosmith Daisy Seed 65MB**: an STM32H750 with one Cortex-M7 core at 480 MHz, a single- and double-precision FPU, an audio codec on the board, 512 KB AXI SRAM plus 64 MB SDRAM, 128 KB internal flash plus 8 MB QSPI, and 31 GPIO. It replaced the WeAct RP2350B Core (two Cortex-M33 cores at 150 MHz, 520 KB RAM, 48 GPIO), mainly because the RP2350B needed a separate WM8731 codec that made it cost about as much as a Daisy Seed; [HARDWARE_PLAN.md](HARDWARE_PLAN.md) has the comparison, audio design, pin map and shopping list. The Seed's headroom paid for the 48 kHz rate-independence (section 6.4), the 2 s echo and 1 s freeze in SDRAM, the ReverbSc reverb and the harmony voice. The first step of the port is not audio I/O but a go/no-go question: **can the board run the engine in real time at all?** `daisy/main_daisy.cpp` answers it by running the engine on synthetic input on the device and reporting how much of the real-time budget it uses.
 
 ### The budget
 
@@ -860,27 +881,29 @@ libDaisy runs the codec at 48 kHz, so a 64-sample block lasts 64 / 48,000 ≈ **
 
 The instructions are in the header of `daisy/Makefile`. In short:
 
-1. Install the Arm toolchain (`arm-none-eabi-gcc`) and `dfu-util`, clone [libDaisy](https://github.com/electro-smith/libDaisy) (with submodules) and build it once with `make`.
-2. `make -C daisy LIBDAISY_DIR=~/src/libDaisy` (or `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh`) builds `daisy/build/vocal_daisy_bench.bin`.
-3. Put the Seed in DFU mode (hold BOOT, press and release RESET, release BOOT), then flash with `make -C daisy LIBDAISY_DIR=~/src/libDaisy program-dfu` (or `build_daisy.sh program-dfu`).
+1. Install the Arm toolchain (`arm-none-eabi-gcc`) and `dfu-util`, clone [libDaisy](https://github.com/electro-smith/libDaisy) (with submodules) and build it once with `make`, and clone [DaisySP](https://github.com/electro-smith/DaisySP) with `--recurse-submodules` (only its ReverbSc source is compiled).
+2. `make -C daisy LIBDAISY_DIR=~/src/libDaisy DAISYSP_SRC_DIR=~/src/DaisySP` (or `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh`) builds `daisy/build/vocal_daisy_bench.bin`.
+3. Put the Seed in DFU mode (hold BOOT, press and release RESET, release BOOT), then flash with the same `make` line plus `program-dfu` (or `build_daisy.sh program-dfu`).
 4. Open the USB serial port (macOS: `screen /dev/tty.usbmodem* 115200`). The program waits for the port to open before it starts.
 
-It repeats a table of results every few seconds covering: a baseline with optional effects off, baseline plus pitch shift, each of the three presets, and a worst case (MEGATRON + pitch shift + freeze). The scenarios and timing loop live in `include/engine_bench.hpp`, shared with the previous board's benchmark (below).
+It repeats a table of results every few seconds covering: a baseline with optional effects off, baseline plus pitch shift, baseline plus reverb, each of the three presets, and a worst case (MEGATRON + pitch shift + harmony + freeze). The scenarios and timing loop live in `include/engine_bench.hpp`.
+
+**Memory placement.** `DemonicEngineMemory` is a `DSY_SDRAM_BSS` global, so its 576 KB go in the SDRAM. The SDRAM only works after `hw.Init()`, and the engine's constructor clears that memory, so the engine is a `static` local constructed in `main()` after `hw.Init()` (its ~410 KB still land in `.bss`, in AXI SRAM). The last build used 94 KB of the 128 KB flash, 438 KB (84 %) of AXI SRAM and 580 KB of SDRAM.
 
 > **Not yet run on hardware.** The benchmark builds against libDaisy, but no Seed has run it yet. Treat the first on-device run as the real measurement.
 
-### The previous board's benchmark (`pico/`)
+### The previous board's benchmark
 
-`pico/main_pico.cpp` is the same benchmark for the WeAct RP2350B Core, the board planned before the Daisy Seed. It stays in the repo and builds with the Pico SDK: `.agents/skills/vocal-fx-processor/scripts/build_pico.sh` (header of `pico/CMakeLists.txt` for details; `-DPICO_BOARD=pico2` or `pico` for a Raspberry Pi Pico 2 or original Pico). Flash by holding BOOT and copying `pico/build/vocal_pico_bench.uf2` to the `RP2350` drive (`RPI-RP2` on an RP2040), then read the serial port as above. Its budget is 1,451 µs per 64-sample block at 44.1 kHz, about 3,400 cycles per sample at 150 MHz. It has not been run on hardware either.
+`pico/` held the same benchmark for the WeAct RP2350B Core. It was removed when the engine outgrew the RP2350B's 520 KB (the engine and its memory now need about 1 MB); it is in the git history, last on `main` before the change that removed it.
 
 ### Things to expect and what to try if it is too slow
 
-- **Floating point.** The Cortex-M7's FPU does `+ − × ÷` and square roots on `float` in single instructions. Library functions (`sinf`, `tanhf`, …) are still dozens of instructions each. The engine does `sinf` twice per sample (chorus LFO, ring modulator), `tanhf` once, plus `floorf`, `fmodf`, `roundf` and, while the pitch shifter is crossfading, `cosf`. These are the first suspects.
-- **Already done:** `M_PI` is a 64-bit `double`, so expressions such as `2.0f * M_PI * …` silently forced double-precision maths, which is slower even on the M7's double-precision FPU and runs in software on a single-precision one such as the RP2350's. The engine now uses a `float` constant (`kTwoPi`) instead.
-- **Candidate optimisations**, in rough order of expected payoff (measure after each change): replace the two per-sample `sin` calls with lookup tables or a recurrence oscillator; replace `tanh` with a cheap polynomial or lookup table; use a lookup table for the pitch crossfade `cos`; drop to a lower sample rate (24 kHz halves the per-second work); put hot code and data in the M7's tightly coupled memory (ITCM/DTCM); move hot paths to fixed-point integer arithmetic.
-- **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB: 36 % of the 512 KB AXI SRAM)**, before libDaisy's own needs, stacks, and audio buffers. It must be a global or static object (`main_daisy.cpp` does this), never a local variable. libDaisy's linker script puts it in AXI SRAM; do not move it to the much slower SDRAM. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
-- **Program size.** The internal flash is 128 KB. If the firmware outgrows it, use the Daisy bootloader and run from QSPI or SRAM (libDaisy's `APP_TYPE`).
-- **I/O.** The Seed's own codec (with an op-amp mic preamp in front, since its input is line level), an SSD1306 128×64 OLED (the simulator's is already that size), WS2812 LED rings driven over SPI (the STM32 has no PIO), and the simulator's controls: eleven encoders and three footswitches. The audio design, firmware layout, latency and parts are in [HARDWARE_PLAN.md](HARDWARE_PLAN.md); the pin map is `include/hw_pinout.hpp` (28 of 31 GPIO). Encoders (not pots) were chosen so that presets can move them.
+- **Probably no optimisation needed.** At 10,000 cycles per sample, about three times one RP2350 core's budget, the per-sample `sinf` (twice), `tanhf` (twice) and the crossfade `cosf` that were the worry on the previous board should fit easily, and the Cortex-M7's FPU does single- *and* double-precision maths in hardware. Do not optimise until the benchmark says so. The engine still uses `float` throughout (`kTwoPi`, not the `double` `M_PI`), which is right for any FPU.
+- **The new costs to watch** are the ReverbSc (8 interpolated, modulated delay lines per sample, the likely largest single cost), the harmony voice (a second `pitchTap`, when on) and the SDRAM reads: one or two per sample each for the echo and the freeze loop. SDRAM is far slower than SRAM, but a few accesses per sample are small next to the budget; the "Baseline + reverb" and "Worst" rows show both.
+- **If it is over 50 % after all**, in rough order of expected payoff (measure after each change): put the hot code in the M7's ITCM and small hot state in DTCM; replace the per-sample `sin` calls with a recurrence oscillator and `tanh` with a cheap polynomial; use 32-sample blocks only if latency needs it (per-block overhead doubles).
+- **Memory.** `DemonicEngine` (about 410 KB, 84 % of AXI SRAM with libDaisy's own needs) must stay a global or static, never a local variable, and out of SDRAM; most of it is the ReverbSc, which is read every sample. The long buffers in `DemonicEngineMemory` are in SDRAM (64 MB, under 1 % used), so a longer echo or freeze costs only `kEchoSize` / `kFreezeSize`. If AXI SRAM gets tight: move the ReverbSc to SDRAM and measure the cost, or shorten its maximum size.
+- **Program size.** The internal flash is 128 KB, of which the benchmark uses 94 KB. If the firmware outgrows it, use the Daisy bootloader and run from QSPI or SRAM (libDaisy's `APP_TYPE`).
+- **I/O.** The Seed's own codec (with an op-amp mic preamp in front, since its input is line level), an SSD1306 128×64 OLED (the simulator's is already that size), WS2812 LED rings driven over SPI (the STM32 has no PIO), and the simulator's controls: twelve encoders (eleven on GPIO, ECHO TIME on an MCP23017 I²C expander) and three footswitches. The audio design, firmware layout, latency and parts are in [HARDWARE_PLAN.md](HARDWARE_PLAN.md); the pin map is `include/hw_pinout.hpp` (28 of 31 GPIO, plus 2 expander pins). Encoders (not pots) were chosen so that presets can move them.
 - **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine` and call `processBlock` from libDaisy's audio callback, with encoders, footswitches, LEDs and the OLED handled in the main loop: the same shape as the desktop app's audio and UI threads.
 
 ---

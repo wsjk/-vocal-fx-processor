@@ -1,5 +1,5 @@
 // Desktop simulator of the Demonic vocal pedal: PortAudio runs the engine on the microphone, raylib draws the pedal
-// enclosure (OLED, eleven encoders, three footswitches, jacks) and turns mouse and keyboard input into control
+// enclosure (OLED, twelve encoders, three footswitches, jacks) and turns mouse and keyboard input into control
 // changes. The audio and UI threads talk only through std::atomic values.
 #include <algorithm>
 #include <atomic>
@@ -19,7 +19,8 @@ using simctl::PARAM_COUNT;
 using simlayout::Circle;
 using simlayout::Layout;
 
-DemonicEngine demonic(SAMPLE_RATE);
+DemonicEngineMemory engineMemory;                  // the engine's long buffers (~576 KB)
+DemonicEngine demonic(SAMPLE_RATE, engineMemory);
 
 std::atomic<bool>  guiBypass(false);        // true bypass: dry signal only, effects off
 std::atomic<float> guiParam[PARAM_COUNT];   // one per encoder, indexed by simctl::Param (set by selectPreset)
@@ -64,6 +65,7 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     demonic.setRobotFreq(guiParam[P_RATE].load());
     demonic.setWavefold(guiParam[P_FOLD].load());
     demonic.setDecimation(guiParam[P_DECIM].load());
+    demonic.setDelayTime(guiParam[P_ECHO_TIME].load());
     demonic.setDelayFeedback(guiParam[P_DELAY_FB].load());
     demonic.setDelayMix(guiParam[P_DELAY_MIX].load());
     demonic.setReverbMix(guiParam[P_REVERB].load());
@@ -396,7 +398,7 @@ int main() {
         draw_screw(E.x + 16, E.y + 16);            draw_screw(E.x + E.w - 16, E.y + 16);
         draw_screw(E.x + 16, E.y + E.h - 16);      draw_screw(E.x + E.w - 16, E.y + E.h - 16);
         ui_text("DEMONIC", 60, 30, 26, kSilk, true);
-        ui_text("VOCAL FX PROCESSOR  /  RP2040", 62, 64, 9, kSilkDim);
+        ui_text("VOCAL FX PROCESSOR  /  DAISY SEED", 62, 64, 9, kSilkDim);
         draw_led(L.led_power, kRed, true);
 
         draw_jack(L.jack_out);

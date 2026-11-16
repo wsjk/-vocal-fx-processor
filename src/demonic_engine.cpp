@@ -9,9 +9,13 @@ namespace {
 // on microcontrollers without a hardware FPU (e.g. the RP2040).
 constexpr float kTwoPi = 6.28318530717958647692f;
 
-// Pitch shifter sweep length: 1764 samples = 40 ms at 44.1 kHz. Long enough for low voices,
-// short enough that the delay it adds stays small. pitchBuffer (2048) must exceed this + 4.
-constexpr float kPitchWindow = 1764.0f;
+// The engine was tuned at 44.1 kHz. Every length and coefficient below is given at this rate and
+// converted to the actual one in the constructor, so the effects sound the same at 48 kHz (Daisy Seed).
+constexpr float kRefRate = 44100.0f;
+
+// Pitch shifter sweep length: 40 ms (1764 samples at 44.1 kHz). Long enough for low voices,
+// short enough that the delay it adds stays small. pitchBuffer must exceed this + 4.
+constexpr float kPitchWindowSec = 0.040f;
 
 // Fraction of each sweep, at each end, spent crossfading between the two taps. Smaller = cleaner pitch
 // but harder splices (a faint tick at the sweep rate); larger = smoother splices but a blurrier pitch.
@@ -29,35 +33,73 @@ inline float readDelayLinear(const float* buf, size_t size, size_t writeHead, fl
     return buf[i0] * (1.0f - frac) + buf[i1] * frac;
 }
 
+// A one-pole coefficient tuned at 44.1 kHz (y += c * (x - y)), converted to `rate` so that the filter
+// keeps the same time constant: (1 - c) per sample at 44.1 kHz becomes (1 - c)^(44100 / rate).
+inline float rateCoef(float c, float rate) { return 1.0f - std::pow(1.0f - c, kRefRate / rate); }
+
+// Bypass clears the long buffers (mem.echo, mem.freeze) this many samples per processed frame, so a
+// 64-frame block clears 4096 samples and the whole job takes about 50 ms of blocks.
+constexpr size_t kClearPerFrame = 64;
+
+// ReverbSc settings: a long, dark tail ("catacomb").
+constexpr float kReverbFeedback = 0.85f;
+constexpr float kReverbLpHz     = 5000.0f;
+
 }  // namespace
-DemonicEngine::DemonicEngine(float sr)
-    : sampleRate(sr), pitchCents(0.0f),
+DemonicEngine::DemonicEngine(float sr, DemonicEngineMemory& memory)
+    : sampleRate(sr), mem(memory), pitchCents(0.0f), harmonyCents(0.0f), harmonyBlend(0.0f),
       subBlend(0.85f), driveDb(11.0f), wetDryMix(0.85f), robotBlend(0.0f), robotFreq(55.0f),
-      wavefoldDrive(1.5f), decimationFactor(1.0f), delayFeedback(0.5f), delayMix(0.3f), reverbMix(0.35f),
-      spectralFreezeActive(false), currentPresetIndex(0),
+      wavefoldDrive(1.5f), decimationFactor(1.0f), delayTime(0.2f), delayFeedback(0.5f), delayMix(0.3f),
+      reverbMix(0.35f), spectralFreezeActive(false), currentPresetIndex(0),
       subDetLP1(0.0f), subDetLP2(0.0f), subDetEnv(0.0f), subArmed(false), subToggle(false), subFilterState(0.0f),
       dcInPrev(0.0f), dcOutPrev(0.0f), lowpassState(0.0f), ringModPhase(0.0f),
       heldSample(0.0f), decimationCounter(0), inputEnvelope(0.0f),
-      pitchWriteHead(0), pitchPhase(0.0f), pitchBlend(0.0f),
-      delayWriteHead(0), lfoChorusPhase(0.0f), feedbackDelayWriteHead(0),
-      freezeReadHead(0.0f), reverbWriteHead(0),
-      bypassTarget(false), bypassBlend(0.0f), bypassStateCleared(false) {
-    std::fill(std::begin(pitchBuffer), std::end(pitchBuffer), 0.0f);
-    std::fill(std::begin(delayLine), std::end(delayLine), 0.0f);
-    std::fill(std::begin(feedbackDelayBuffer), std::end(feedbackDelayBuffer), 0.0f);
-    std::fill(std::begin(freezeBuffer), std::end(freezeBuffer), 0.0f);
-    std::fill(std::begin(reverbBuffer), std::end(reverbBuffer), 0.0f);
+      pitchWriteHead(0), pitchPhase(0.0f), pitchBlend(0.0f), harmonyPhase(0.0f), harmonyLevel(0.0f),
+      delayWriteHead(0), lfoChorusPhase(0.0f), feedbackDelayWriteHead(0), echoDelaySamples(0.0f),
+      freezeWriteHead(0), freezeStart(0), freezePos(0), reverbOk(false),
+      bypassTarget(false), bypassBlend(0.0f), bypassStateCleared(false), clearCursor(0) {
+    // Lengths in samples for this rate. The comments give the 44.1 kHz value the effect was tuned at.
+    pitchWindow  = std::min(kPitchWindowSec * sampleRate, static_cast<float>(kPitchBufSize - 8));   // 1764
+    chorusDelay  = 441.0f * sampleRate / kRefRate;                                  // 10 ms
+    chorusSwing  = 66.0f * sampleRate / kRefRate;                                   // 1.5 ms
+    if (chorusDelay + chorusSwing > kChorusBufSize - 4) {                           // only above 48 kHz
+        const float s = (kChorusBufSize - 4) / (chorusDelay + chorusSwing);
+        chorusDelay *= s; chorusSwing *= s;
+    }
+    echoLen       = std::min(static_cast<size_t>(kMaxDelayTime * sampleRate) + 8, DemonicEngineMemory::kEchoSize);
+    freezeFadeLen = std::max<size_t>(1, static_cast<size_t>(0.020f * sampleRate));
+    freezeLoopLen = std::min(static_cast<size_t>(sampleRate),
+                             DemonicEngineMemory::kFreezeSize - freezeFadeLen);     // 1 s loop
+    freezeFadeLen = std::min(freezeFadeLen, freezeLoopLen / 2);
+    freezeRingLen = freezeLoopLen + freezeFadeLen;
 
-    // {Name, Drive, Sub, Robot, Freq, Fold, Decim, DelayFB, DelayMix, RevMix, Mix}
-    presets[0] = {"DEMONIC GROWL", 11.0f, 0.85f, 0.0f,  45.0f, 1.0f, 1.0f, 0.6f,  0.35f, 0.45f, 0.85f};
-    presets[1] = {"MEGATRON",       6.0f,  0.20f, 0.95f, 75.0f, 3.0f, 3.5f, 0.4f,  0.20f, 0.20f, 0.90f};
-    presets[2] = {"CYBER DEMON",    10.0f, 0.70f, 0.65f, 55.0f, 2.5f, 2.0f, 0.75f, 0.40f, 0.50f, 0.85f};
+    envCoef        = rateCoef(0.1f, sampleRate);
+    pitchBlendCoef = rateCoef(0.002f, sampleRate);
+    subDetCoef     = rateCoef(0.08f, sampleRate);
+    subAttackCoef  = rateCoef(0.02f, sampleRate);
+    subReleaseCoef = rateCoef(0.0005f, sampleRate);
+    subFilterCoef  = rateCoef(0.04f, sampleRate);
+    toneCoef       = rateCoef(0.35f, sampleRate);
+    dcPole         = 1.0f - rateCoef(1.0f - 0.995f, sampleRate);
+    delayGlideCoef = rateCoef(0.0002f, sampleRate);                                 // ~110 ms glide
+
+    // {Name, Drive, Sub, Robot, Freq, Fold, Decim, DelayFB, DelayMix, RevMix, Mix, DelayTime, HarmCents, HarmBlend}
+    presets[0] = {"DEMONIC GROWL", 11.0f, 0.85f, 0.0f,  45.0f, 1.0f, 1.0f, 0.6f,  0.35f, 0.45f, 0.85f, 0.20f, 0.0f,   0.0f};
+    presets[1] = {"MEGATRON",       6.0f,  0.20f, 0.95f, 75.0f, 3.0f, 3.5f, 0.4f,  0.20f, 0.20f, 0.90f, 0.20f, 0.0f,   0.0f};
+    presets[2] = {"CYBER DEMON",    10.0f, 0.70f, 0.65f, 55.0f, 2.5f, 2.0f, 0.75f, 0.40f, 0.50f, 0.85f, 0.20f, 700.0f, 0.4f};
 
     loadPreset(0);
+    resetState();
+    clearLongBuffers(SIZE_MAX);
 }
 
 void DemonicEngine::setPitchShift(float cents) { pitchCents = std::clamp(cents, -1200.0f, 1200.0f); }
 void DemonicEngine::setFormantShift(float cents) { setPitchShift(cents); }
+void DemonicEngine::setHarmony(float cents, float blend) {
+    harmonyCents = std::clamp(cents, -1200.0f, 1200.0f);
+    harmonyBlend = std::clamp(blend, 0.0f, 1.0f);
+}
+void DemonicEngine::setDelayTime(float seconds) { delayTime = std::clamp(seconds, kMinDelayTime, kMaxDelayTime); }
 void DemonicEngine::setSubOctaveBlend(float blend) { subBlend = blend; }
 void DemonicEngine::setDrive(float db) { driveDb = db; }
 void DemonicEngine::setRobotBlend(float blend) { robotBlend = blend; }
@@ -78,25 +120,38 @@ bool DemonicEngine::isBypassed() const { return bypassTarget; }
 void DemonicEngine::resetState() {
     std::fill(std::begin(pitchBuffer), std::end(pitchBuffer), 0.0f);
     std::fill(std::begin(delayLine), std::end(delayLine), 0.0f);
-    std::fill(std::begin(feedbackDelayBuffer), std::end(feedbackDelayBuffer), 0.0f);
-    std::fill(std::begin(freezeBuffer), std::end(freezeBuffer), 0.0f);
-    std::fill(std::begin(reverbBuffer), std::end(reverbBuffer), 0.0f);
-    pitchWriteHead = 0; pitchPhase = 0.0f; pitchBlend = 0.0f;
+    pitchWriteHead = 0; pitchPhase = 0.0f; pitchBlend = 0.0f; harmonyPhase = 0.0f; harmonyLevel = 0.0f;
     subDetLP1 = subDetLP2 = subDetEnv = 0.0f; subArmed = false; subToggle = false; subFilterState = 0.0f;
     dcInPrev = dcOutPrev = lowpassState = ringModPhase = heldSample = 0.0f;
     decimationCounter = 0; inputEnvelope = 0.0f;
     delayWriteHead = 0; lfoChorusPhase = 0.0f; feedbackDelayWriteHead = 0;
-    freezeReadHead = 0.0f; reverbWriteHead = 0;
+    echoDelaySamples = std::clamp(delayTime * sampleRate, 1.0f, static_cast<float>(echoLen - 2));
+    freezeWriteHead = 0; freezeStart = 0; freezePos = 0;
+    reverbOk = reverb.Init(sampleRate) == 0;   // Init also clears the reverb's delay lines
+    if (reverbOk) { reverb.SetFeedback(kReverbFeedback); reverb.SetLpFreq(kReverbLpHz); }
+    clearCursor = 0;                           // the long buffers are cleared separately (clearLongBuffers)
+}
+
+bool DemonicEngine::clearLongBuffers(size_t maxSamples) {
+    const size_t total = echoLen + freezeRingLen;
+    while (clearCursor < total && maxSamples > 0) {
+        float* buf; size_t from, to;
+        if (clearCursor < echoLen) { buf = mem.echo;   from = clearCursor;           to = echoLen; }
+        else                       { buf = mem.freeze; from = clearCursor - echoLen; to = freezeRingLen; }
+        const size_t n = std::min(to - from, maxSamples);
+        std::fill(buf + from, buf + from + n, 0.0f);
+        clearCursor += n; maxSamples -= n;
+    }
+    return clearCursor >= total;
 }
 
 void DemonicEngine::setSpectralFreeze(bool freeze) {
     if (freeze && bypassTarget) return;   // nothing to freeze while the effects are off
     if (freeze && !spectralFreezeActive) {
-        // Capture current audio frame block into freeze buffer for infinite sustain drone
-        for (size_t i = 0; i < 4096; ++i) {
-            freezeBuffer[i] = feedbackDelayBuffer[(feedbackDelayWriteHead + i) % 22050];
-        }
-        freezeReadHead = 0.0f;
+        // The freeze ring holds the last second (plus the crossfade) of the echo input. Stop recording
+        // and loop it from its oldest sample; nothing is copied, so pressing Freeze costs nothing.
+        freezeStart = freezeWriteHead;
+        freezePos = 0;
     }
     spectralFreezeActive = freeze;
 }
@@ -117,6 +172,21 @@ void DemonicEngine::loadPreset(int index) {
     delayMix = presets[currentPresetIndex].delayMix;
     reverbMix = presets[currentPresetIndex].reverbMix;
     wetDryMix = presets[currentPresetIndex].wetDryMix;
+    setDelayTime(presets[currentPresetIndex].delayTime);
+    setHarmony(presets[currentPresetIndex].harmonyCents, presets[currentPresetIndex].harmonyBlend);
+}
+
+float DemonicEngine::pitchTap(float phase) const {
+    float wA = 1.0f;                                           // weight of the main tap
+    if (phase < kPitchFade)             wA = 0.5f - 0.5f * std::cos(kPi * phase / kPitchFade);
+    else if (phase > 1.0f - kPitchFade) wA = 0.5f - 0.5f * std::cos(kPi * (1.0f - phase) / kPitchFade);
+    float shifted = readDelayLinear(pitchBuffer, kPitchBufSize, pitchWriteHead, 2.0f + phase * pitchWindow) * wA;
+    if (wA < 1.0f) {
+        float phase2 = phase + 0.5f;
+        if (phase2 >= 1.0f) phase2 -= 1.0f;
+        shifted += readDelayLinear(pitchBuffer, kPitchBufSize, pitchWriteHead, 2.0f + phase2 * pitchWindow) * (1.0f - wA);
+    }
+    return shifted;
 }
 
 const char* DemonicEngine::getCurrentPresetName() const {
@@ -132,9 +202,11 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
     // skip all DSP. The effect memory is wiped once, so a runaway echo loop is also cleared this way.
     if (bypassTarget && bypassBlend >= 1.0f) {
         if (!bypassStateCleared) { resetState(); bypassStateCleared = true; }
+        clearLongBuffers(numFrames * kClearPerFrame);   // a slice per block (see setBypass)
         for (size_t i = 0; i < numFrames; ++i) output[i] = input[i];
         return;
     }
+    if (bypassStateCleared) clearLongBuffers(SIZE_MAX);   // bypass released before the slices finished
     bypassStateCleared = false;
     const float bypassStep = 1.0f / (0.005f * sampleRate);   // full crossfade takes 5 ms
 
@@ -144,12 +216,14 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
     const float pitchRatio = std::pow(2.0f, pitchCents / 1200.0f);   // 100 cents = 1 semitone
     const bool pitchActive = std::abs(pitchCents) >= 1.0f;
     const float pitchBlendTarget = pitchActive ? 1.0f : 0.0f;
+    const float harmonyRatio = std::pow(2.0f, (pitchCents + harmonyCents) / 1200.0f);
+    const float delayTarget = std::clamp(delayTime * sampleRate, 1.0f, static_cast<float>(echoLen - 2));
 
     for (size_t i = 0; i < numFrames; ++i) {
         float dry = input[i];
 
         float activeSignal = (std::abs(dry) > noiseGateThreshold) ? dry : 0.0f;
-        inputEnvelope = inputEnvelope + 0.1f * (std::abs(activeSignal) - inputEnvelope);
+        inputEnvelope = inputEnvelope + envCoef * (std::abs(activeSignal) - inputEnvelope);
 
         // 0b. Pitch Shifter: a read tap whose delay sweeps slowly, so the signal is read faster or
         //     slower than it was written (pitchPhase 0..1 is the tap's position in the sweep). When the
@@ -157,23 +231,22 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         //     covers for it with a short crossfade. Using one tap for most of the sweep keeps the pitch
         //     clean; a constant 50/50 blend of two taps would cancel the fundamental of a steady tone.
         pitchBuffer[pitchWriteHead] = activeSignal;
-        pitchBlend += 0.002f * (pitchBlendTarget - pitchBlend);       // ~10 ms fade in/out, avoids clicks
+        pitchBlend += pitchBlendCoef * (pitchBlendTarget - pitchBlend);       // ~10 ms fade in/out, avoids clicks
         float voice = activeSignal;
         if (pitchActive || pitchBlend > 0.001f) {
-            pitchPhase += (1.0f - pitchRatio) / kPitchWindow;         // delay grows if pitching down
+            pitchPhase += (1.0f - pitchRatio) / pitchWindow;          // delay grows if pitching down
             pitchPhase -= std::floor(pitchPhase);                      // wrap into [0, 1)
-            float wA = 1.0f;                                           // weight of the main tap
-            if (pitchPhase < kPitchFade)             wA = 0.5f - 0.5f * std::cos(kPi * pitchPhase / kPitchFade);
-            else if (pitchPhase > 1.0f - kPitchFade) wA = 0.5f - 0.5f * std::cos(kPi * (1.0f - pitchPhase) / kPitchFade);
-            float shifted = readDelayLinear(pitchBuffer, 2048, pitchWriteHead, 2.0f + pitchPhase * kPitchWindow) * wA;
-            if (wA < 1.0f) {
-                float phase2 = pitchPhase + 0.5f;
-                if (phase2 >= 1.0f) phase2 -= 1.0f;
-                shifted += readDelayLinear(pitchBuffer, 2048, pitchWriteHead, 2.0f + phase2 * kPitchWindow) * (1.0f - wA);
-            }
-            voice = activeSignal * (1.0f - pitchBlend) + shifted * pitchBlend;
+            voice = activeSignal * (1.0f - pitchBlend) + pitchTap(pitchPhase) * pitchBlend;
         }
-        pitchWriteHead = (pitchWriteHead + 1) % 2048;
+        // 0c. Harmony: a second voice read from the same buffer by its own sweep, harmonyCents away from
+        //     the pitch-shifted voice, faded in and out like the shifter.
+        harmonyLevel += pitchBlendCoef * (harmonyBlend - harmonyLevel);
+        if (harmonyBlend > 0.0f || harmonyLevel > 0.001f) {
+            harmonyPhase += (1.0f - harmonyRatio) / pitchWindow;
+            harmonyPhase -= std::floor(harmonyPhase);
+            voice += pitchTap(harmonyPhase) * harmonyLevel;
+        }
+        pitchWriteHead = (pitchWriteHead + 1) % kPitchBufSize;
 
         // 1. Chorus Doubler
         delayLine[delayWriteHead] = voice;
@@ -181,16 +254,16 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         lfoChorusPhase += (kTwoPi * 0.5f) / sampleRate;
         if (lfoChorusPhase >= kTwoPi) lfoChorusPhase -= kTwoPi;
 
-        float delaySamples = 441.0f + (chorusLfo * 0.3f * 220.0f);
-        float readIdxFloat = static_cast<float>(delayWriteHead) - delaySamples;
-        while (readIdxFloat < 0.0f) readIdxFloat += 2048.0f;
-        size_t idx1 = static_cast<size_t>(readIdxFloat) % 2048;
-        size_t idx2 = (idx1 + 1) % 2048;
+        float chorusSamples = chorusDelay + chorusLfo * chorusSwing;
+        float readIdxFloat = static_cast<float>(delayWriteHead) - chorusSamples;
+        while (readIdxFloat < 0.0f) readIdxFloat += static_cast<float>(kChorusBufSize);
+        size_t idx1 = static_cast<size_t>(readIdxFloat) % kChorusBufSize;
+        size_t idx2 = (idx1 + 1) % kChorusBufSize;
         float frac = readIdxFloat - static_cast<float>(idx1);
         float doubledVoice = delayLine[idx1] * (1.0f - frac) + delayLine[idx2] * frac;
 
         float widenedVoice = voice + (doubledVoice * 0.3f);
-        delayWriteHead = (delayWriteHead + 1) % 2048;
+        delayWriteHead = (delayWriteHead + 1) % kChorusBufSize;
 
         // 2. Sub-Octave (octave divider)
         //    Detect one rising edge per cycle of the voice and flip a square wave each time, so the
@@ -203,10 +276,10 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         //    (The old version toggled on rising AND falling zero crossings, which gives the same
         //    frequency as the voice rather than half, and it needed |signal| > the noise-gate threshold
         //    exactly at the crossing, which the gate itself had just zeroed.)
-        subDetLP1 += 0.08f * (voice - subDetLP1);
-        subDetLP2 += 0.08f * (subDetLP1 - subDetLP2);
+        subDetLP1 += subDetCoef * (voice - subDetLP1);
+        subDetLP2 += subDetCoef * (subDetLP1 - subDetLP2);
         float detAbs = std::abs(subDetLP2);
-        subDetEnv += (detAbs > subDetEnv ? 0.02f : 0.0005f) * (detAbs - subDetEnv);
+        subDetEnv += (detAbs > subDetEnv ? subAttackCoef : subReleaseCoef) * (detAbs - subDetEnv);
         if (subDetEnv > 0.006f) {
             float hysteresis = std::max(0.004f, 0.25f * subDetEnv);
             if (subArmed && subDetLP2 > hysteresis) {
@@ -218,7 +291,7 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         }
 
         float rawSub = subToggle ? 1.0f : -1.0f;
-        subFilterState = subFilterState + 0.04f * (rawSub - subFilterState);
+        subFilterState = subFilterState + subFilterCoef * (rawSub - subFilterState);
         float subOctave = subFilterState * inputEnvelope * subBlend * 1.8f;
 
         float wet = widenedVoice + subOctave;
@@ -256,43 +329,53 @@ void DemonicEngine::processBlock(const float* input, float* output, size_t numFr
         wet = std::round(wet * quantizationLevels) / quantizationLevels;
 
         // 6. Tone Shaping
-        lowpassState = lowpassState + 0.35f * (wet - lowpassState);
+        lowpassState = lowpassState + toneCoef * (wet - lowpassState);
         wet = lowpassState;
 
         // 7. Spectral Freeze / Infinite Sustain Drone Overlay
+        //    The loop is the ring's last freezeLoopLen samples; its final freezeFadeLen samples fade into
+        //    the samples recorded just before the loop's start, so the loop point does not click.
         if (spectralFreezeActive) {
-            size_t freezeIdx = static_cast<size_t>(freezeReadHead) % 4096;
-            float frozenSample = freezeBuffer[freezeIdx];
-            freezeReadHead += 1.0f;
-            if (freezeReadHead >= 4096.0f) freezeReadHead = 0.0f;
+            const size_t loopStart = freezeStart + freezeFadeLen;
+            float frozenSample;
+            if (freezePos + freezeFadeLen < freezeLoopLen) {
+                frozenSample = mem.freeze[(loopStart + freezePos) % freezeRingLen];
+            } else {
+                const size_t j = freezePos + freezeFadeLen - freezeLoopLen;     // 0..freezeFadeLen-1
+                const float w = static_cast<float>(j) / static_cast<float>(freezeFadeLen);
+                frozenSample = mem.freeze[(loopStart + freezePos) % freezeRingLen] * (1.0f - w)
+                             + mem.freeze[(freezeStart + j) % freezeRingLen] * w;
+            }
+            if (++freezePos >= freezeLoopLen) freezePos = 0;
             wet = (wet * 0.3f) + (frozenSample * 0.7f); // Blend live signal with infinite sustain drone
         }
 
-        // 8. Feedback Delay with Infinite Repeat / Self-Oscillation (~300ms delay tap)
-        size_t delayTap = (feedbackDelayWriteHead + 13230) % 22050;
-        float delayedSample = feedbackDelayBuffer[delayTap];
-        
+        // 8. Feedback Delay with Infinite Repeat / Self-Oscillation. The delay glides towards the ECHO
+        //    TIME setting, so turning it bends the echoes' pitch like a tape delay instead of clicking.
+        echoDelaySamples += delayGlideCoef * (delayTarget - echoDelaySamples);
+        float delayedSample = readDelayLinear(mem.echo, echoLen, feedbackDelayWriteHead, echoDelaySamples);
+
         // Feed signal + feedback into delay buffer (feedback >= 1.0 creates infinite repeat / self-oscillation)
         // tanhf bounds the loop: above 1.0 the echo sustains at a steady level instead of growing forever.
-        feedbackDelayBuffer[feedbackDelayWriteHead] = tanhf(wet + (delayedSample * delayFeedback));
-        feedbackDelayWriteHead = (feedbackDelayWriteHead + 1) % 22050;
+        const float echoIn = tanhf(wet + (delayedSample * delayFeedback));
+        mem.echo[feedbackDelayWriteHead] = echoIn;
+        feedbackDelayWriteHead = (feedbackDelayWriteHead + 1) % echoLen;
+        if (!spectralFreezeActive) {                    // the freeze ring records until Freeze is pressed
+            mem.freeze[freezeWriteHead] = echoIn;
+            freezeWriteHead = (freezeWriteHead + 1) % freezeRingLen;
+        }
 
         wet = (wet * (1.0f - delayMix)) + (delayedSample * delayMix);
 
-        // 9. Catacomb Reverb
-        size_t revDelay1 = (reverbWriteHead + 4410) % 16384;
-        size_t revDelay2 = (reverbWriteHead + 11025) % 16384;
-        float revTap1 = reverbBuffer[revDelay1];
-        float revTap2 = reverbBuffer[revDelay2];
-        
-        float reverbEcho = (revTap1 * 0.6f) + (revTap2 * 0.4f);
-        reverbBuffer[reverbWriteHead] = wet + (reverbEcho * 0.55f);
-        reverbWriteHead = (reverbWriteHead + 1) % 16384;
-
-        wet = (wet * (1.0f - reverbMix)) + (reverbEcho * reverbMix);
+        // 9. Catacomb Reverb: DaisySP's ReverbSc (8 modulated delay lines), mono in, left output used.
+        if (reverbOk) {
+            float revL = 0.0f, revR = 0.0f;
+            reverb.Process(wet, wet, &revL, &revR);
+            wet = (wet * (1.0f - reverbMix)) + (revL * reverbMix);
+        }
 
         // 10. DC Blocker
-        float dcBlocked = wet - dcInPrev + 0.995f * dcOutPrev;
+        float dcBlocked = wet - dcInPrev + dcPole * dcOutPrev;
         dcInPrev = wet;
         dcOutPrev = dcBlocked;
         wet = dcBlocked;

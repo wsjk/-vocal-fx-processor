@@ -1,6 +1,6 @@
 #pragma once
-// Shared core of the on-board benchmarks (pico/main_pico.cpp, daisy/main_daisy.cpp): the scenarios,
-// the synthetic input and the timing loop. Each board supplies its own microsecond clock and printing.
+// Core of the on-board benchmark (daisy/main_daisy.cpp): the scenarios, the synthetic input and the
+// timing loop. The board supplies its own microsecond clock and printing.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +23,7 @@ inline void fillInput(float* in) {
 inline void minimal(DemonicEngine& e) {
     e.setSpectralFreeze(false);
     e.setPitchShift(0.0f);
+    e.setHarmony(0.0f, 0.0f);
     e.setSubOctaveBlend(0.0f);
     e.setRobotBlend(0.0f);
     e.setWavefold(0.0f);
@@ -41,11 +42,13 @@ struct Scenario {
 inline const Scenario kScenarios[] = {
     {"Baseline (optional effects off)",  [](DemonicEngine& e) { minimal(e); }},
     {"Baseline + pitch shift -5 st",     [](DemonicEngine& e) { minimal(e); e.setPitchShift(-500.0f); }},
+    {"Baseline + reverb",                [](DemonicEngine& e) { minimal(e); e.setReverbMix(0.5f); }},
     {"Preset 0: DEMONIC GROWL",          [](DemonicEngine& e) { minimal(e); e.loadPreset(0); }},
     {"Preset 1: MEGATRON",               [](DemonicEngine& e) { minimal(e); e.loadPreset(1); }},
     {"Preset 2: CYBER DEMON",            [](DemonicEngine& e) { minimal(e); e.loadPreset(2); }},
-    {"Worst case: MEGATRON + pitch + freeze", [](DemonicEngine& e) {
-        minimal(e); e.loadPreset(1); e.setPitchShift(-500.0f); e.setSpectralFreeze(true); }},
+    {"Worst: MEGATRON+pitch+harmony+freeze", [](DemonicEngine& e) {
+        minimal(e); e.loadPreset(1); e.setPitchShift(-500.0f); e.setHarmony(700.0f, 0.5f);
+        e.setSpectralFreeze(true); }},
 };
 
 inline volatile float sink;   // consuming the output stops the compiler from optimising the work away

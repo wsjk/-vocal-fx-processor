@@ -7,8 +7,13 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo 
 
 cd "$REPO_ROOT"
 
+# DaisySP (for the ReverbSc reverb): use a local clone if there is one, so no download is needed.
+DAISYSP_DIR="${DAISYSP_DIR:-/Users/ww/src/DaisySP}"
+DAISYSP_ARG=()
+[ -f "$DAISYSP_DIR/DaisySP-LGPL/Source/Effects/reverbsc.cpp" ] && DAISYSP_ARG=(-DFETCHCONTENT_SOURCE_DIR_DAISYSP="$DAISYSP_DIR")
+
 echo "==> Building desktop app..."
-cmake -B build -S . -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake -B build -S . -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ${DAISYSP_ARG[@]+"${DAISYSP_ARG[@]}"}
 cmake --build build -j4
 
 echo "==> Desktop build complete: ./build/vocal_desktop"

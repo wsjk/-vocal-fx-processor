@@ -8,8 +8,8 @@
 // microseconds. processBlock must finish in LESS than that, with room to spare for the audio driver,
 // the display and the controls. A reading above 100 % means the engine cannot keep up.
 //
-// Build and flash instructions: see daisy/Makefile. The scenarios and timing loop are shared with the
-// Pico benchmark (include/engine_bench.hpp).
+// Build and flash instructions: see daisy/Makefile. The scenarios and timing loop are in
+// include/engine_bench.hpp.
 #include "daisy_seed.h"
 #include "engine_bench.hpp"
 
@@ -22,9 +22,10 @@ constexpr float kBudgetUs   = bench::budgetUs(kSampleRate);   // ~1333 us
 
 DaisySeed hw;
 
-// ~182 KB: far too big for the stack, so it must be a global. libDaisy's linker script puts .bss in
-// the 512 KB AXI SRAM.
-DemonicEngine engine(kSampleRate);
+// The engine's long buffers (echo, freeze loop; ~576 KB) go in the 64 MB SDRAM. SDRAM only works once
+// hw.Init() has started it, and the engine constructor clears this memory, so the engine itself is
+// created in main() (as a static, so its ~410 KB still lands in .bss, in the 512 KB AXI SRAM).
+DemonicEngineMemory DSY_SDRAM_BSS engineMemory;
 
 float inBlock[bench::kBlock];
 float outBlock[bench::kBlock];
@@ -41,6 +42,7 @@ Tenths tenths(float x) {
 int main() {
     hw.Init(true);            // true = boost the CPU clock to 480 MHz
     hw.StartLog(true);        // USB serial; waits until a terminal opens the port
+    static DemonicEngine engine(kSampleRate, engineMemory);   // after hw.Init(): see engineMemory
     bench::fillInput(inBlock);
 
     bool led = false;

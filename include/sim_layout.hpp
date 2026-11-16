@@ -7,9 +7,9 @@
 //   |  +------------------------+   +---------------- VOICE ----------------+      |
 //   |  |   128x64 OLED (x3)     |   |  PITCH      DRIVE      SUB OCT         |      |
 //   |  +------------------------+   +-----------------------------------------+      |
-//   |  +------------ MANGLE ------------+   +------------ SPACE ------------+      |
-//   |  | ROBOT  CLANK RATE  FOLD  DECIM |   | DELAY FB  DELAY MIX  REVERB  MIX |    |
-//   |  +--------------------------------+   +--------------------------------+      |
+//   |  +--------- MANGLE ----------+ +------------------- SPACE -------------------+|
+//   |  | ROBOT  CLANK  FOLD  DECIM | | ECHO TIME  DELAY FB  DELAY MIX  REVERB  MIX ||
+//   |  +---------------------------+ +---------------------------------------------+|
 //   |        (LED)                (LED)                (LED)                          |
 //   |       PRESET               FREEZE               BYPASS      (footswitches)     |
 //   +------------------------------------------------------------------------------+
@@ -70,8 +70,8 @@ struct Layout {
         L.oled_bezel = {L.oled_screen.x - 10, L.oled_screen.y - 10, sw + 20, sh + 20};
 
         L.groups[simctl::G_VOICE] = {488, 86, 432, 212};      // beside the OLED, same height as its bezel
-        L.groups[simctl::G_MANGLE] = {50, 318, 425, 200};
-        L.groups[simctl::G_SPACE] = {495, 318, 425, 200};
+        L.groups[simctl::G_MANGLE] = {50, 318, 380, 200};     // 4 encoders
+        L.groups[simctl::G_SPACE] = {450, 318, 470, 200};     // 5 encoders, so wider
 
         // Encoders: evenly spaced across their group, one row per group, centred vertically together with the
         // label and value under them (ring top to value bottom is about 2 * ring radius + 31 px).

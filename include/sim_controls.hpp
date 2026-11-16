@@ -1,5 +1,5 @@
 #pragma once
-// The pedal's eleven encoders as data: what each one controls, its range, how far one click moves it, and how its
+// The pedal's twelve encoders as data: what each one controls, its range, how far one click moves it, and how its
 // value is shown. No graphics library, so it is unit-tested on the host (tests/sim_controls_test.cpp) and shared by
 // the desktop simulator (desktop/main_desktop.cpp).
 //
@@ -16,7 +16,7 @@ namespace simctl {
 enum Param {
     P_PITCH, P_DRIVE, P_SUB,                      // VOICE
     P_ROBOT, P_RATE, P_FOLD, P_DECIM,             // MANGLE
-    P_DELAY_FB, P_DELAY_MIX, P_REVERB, P_MIX,     // SPACE
+    P_ECHO_TIME, P_DELAY_FB, P_DELAY_MIX, P_REVERB, P_MIX,   // SPACE
     PARAM_COUNT
 };
 
@@ -42,6 +42,7 @@ inline const ParamSpec& spec(int p) {
         {"CLANK RATE", "%.0f Hz",  1.0f,   10.0f,    200.0f,  5.0f,    false, INFINITY, G_MANGLE},
         {"FOLD",       "%.2f",     1.0f,   0.0f,     5.0f,    0.1f,    false, INFINITY, G_MANGLE},
         {"DECIMATE",   "x%.1f",    1.0f,   1.0f,     6.0f,    0.5f,    false, INFINITY, G_MANGLE},
+        {"ECHO TIME",  "%.0f ms",  1000.0f, 0.02f,   2.0f,    0.02f,   false, INFINITY, G_SPACE},
         {"DELAY FB",   "%.1f%%",   100.0f, 0.0f,     1.05f,   0.025f,  false, 1.0f,     G_SPACE},
         {"DELAY MIX",  "%.0f%%",   100.0f, 0.0f,     1.0f,    0.05f,   false, INFINITY, G_SPACE},
         {"REVERB",     "%.0f%%",   100.0f, 0.0f,     1.0f,    0.05f,   false, INFINITY, G_SPACE},
@@ -99,6 +100,7 @@ inline void preset_values(const VocalPreset& pr, float pitch_cents, float out[PA
     out[P_RATE] = pr.robotFreq;
     out[P_FOLD] = pr.wavefoldDrive;
     out[P_DECIM] = pr.decimationFactor;
+    out[P_ECHO_TIME] = pr.delayTime;
     out[P_DELAY_FB] = pr.delayFeedback;
     out[P_DELAY_MIX] = pr.delayMix;
     out[P_REVERB] = pr.reverbMix;
