@@ -18,14 +18,14 @@ Line numbers (`file:line`) refer to the code as it exists in the repository snap
 8. [How to extend it](#8-how-to-extend-it)
 9. [Testing without a microphone](#9-testing-without-a-microphone)
 10. [Code review: known issues](#10-code-review-known-issues)
-11. [Toward the Raspberry Pi Pico](#11-toward-the-raspberry-pi-pico)
+11. [Toward the Daisy Seed](#11-toward-the-daisy-seed)
 12. [Glossary](#12-glossary)
 
 ---
 
 ## 1. Project at a glance
 
-**What it is.** A real-time vocal effects processor. A microphone signal goes in, passes through a chain of ten effect stages, and comes out of the speakers. The goal is a standalone guitar-pedal-style device built on an RP2350 board (WeAct RP2350B Core), with a desktop version that simulates the whole pedal (enclosure, 128×64 OLED, encoders, footswitches) so the effects can be developed on a laptop first.
+**What it is.** A real-time vocal effects processor. A microphone signal goes in, passes through a chain of ten effect stages, and comes out of the speakers. The goal is a standalone guitar-pedal-style device built on an Electrosmith Daisy Seed, with a desktop version that simulates the whole pedal (enclosure, 128×64 OLED, encoders, footswitches) so the effects can be developed on a laptop first.
 
 **Technology**
 
@@ -298,7 +298,7 @@ Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:43`), which:
 
 ### 4.3 Design decisions worth knowing
 
-- **The engine knows nothing about PortAudio or raylib.** `DemonicEngine` takes in a float array and fills a float array. That is why it can be tested headlessly (section 9) and is the part meant to be reused on the Pico.
+- **The engine knows nothing about PortAudio or raylib.** `DemonicEngine` takes in a float array and fills a float array. That is why it can be tested headlessly (section 9) and is the part meant to be reused on the Daisy Seed.
 - **Everything is allocated up front.** No `new`, no `malloc`, no `std::vector` growth in the audio path — required for real-time safety and for microcontrollers.
 - **Control values are copied in once per block**, not per sample. Cheap, but it means parameter changes are "steppy" (see section 10.10).
 - **The engine is a single global object** (`DemonicEngine demonic(SAMPLE_RATE);`, `main_desktop.cpp:22`). Both threads can see it, but by convention only the audio thread touches its state. The UI thread only calls `getPreset()` and `getPresetCount()`, which read data that never changes after construction.
@@ -577,7 +577,7 @@ CMake describes your project as a set of **targets** (things to build) and the *
 | `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test` | The test programs in `tests/` (the `foreach` in `CMakeLists.txt` lists them). | `demonic_engine` |
 | `vocal_desktop` | The desktop app. | `demonic_engine`, PortAudio, raylib (plus Apple system frameworks on macOS) |
 
-Splitting the engine into its own library is what lets the tests, the desktop app, and later the Pico build all share one copy of the DSP code.
+Splitting the engine into its own library is what lets the tests, the desktop app, and the board benchmarks (`daisy/`, `pico/`) all share one copy of the DSP code.
 
 ### Options
 
@@ -617,7 +617,7 @@ With CMake 4 or newer, raylib 5.0's own `CMakeLists.txt` may refuse to configure
 
 > **Verification status.** The full CMake build (engine, `engine_dsp_test`, `sim_controls_test`, and `vocal_desktop` with PortAudio and the downloaded raylib) has been built on macOS, and both tests pass there. The engine and tests also build and pass on Linux with g++. The desktop app is untested on Linux and Windows.
 
-The Raspberry Pi Pico build lives in a **separate** CMake project (`pico/CMakeLists.txt`) because it needs the Pico SDK and an ARM cross-compiler; see section 11.
+The Daisy Seed build (`daisy/Makefile`, needs libDaisy) and the previous board's RP2350 build (`pico/CMakeLists.txt`, needs the Pico SDK) are **separate** projects, because each needs its own SDK and an Arm cross-compiler; see section 11.
 
 ---
 
@@ -675,7 +675,7 @@ The encoder is drawn, hit-tested and turned automatically: `Layout::make()` spac
 2. Add any state it needs (a phase, a filter memory, a buffer) as private members and initialise them in the constructor, zeroing any arrays.
 3. Insert the code inside the `for` loop in `processBlock`, working on the `wet` variable.
 4. Expose its controls with setters and encoders as in 8.1.
-5. If it needs a buffer, remember: fixed size, wrap indexes with `%`, and watch your memory budget if the Pico is a target (section 11).
+5. If it needs a buffer, remember: fixed size, wrap indexes with `%`, and watch the Daisy Seed's memory budget (section 11).
 
 **Real-time rules for anything you add:** no `new`/`delete`/`malloc`, no `std::vector` growth, no printing, no mutexes, no file access inside `processBlock` or the callback.
 
@@ -826,7 +826,7 @@ In practice this "works" on common hardware (at worst a slightly torn waveform),
 
 ### 10.8 Build portability — mostly **RESOLVED**
 
-**Fixed:** macOS `-framework` flags are now conditional on `if(APPLE)`; PortAudio is found via `pkg-config`, then `/opt/homebrew` and `/usr/local`, then the bundled copy, so Apple Silicon works without edits; the unneeded `ASM` language and the empty `dsp_pipeline.cpp` were removed from the build; the engine is a reusable library with tests registered in `ctest`; and the engine no longer uses `M_PI` (it uses a `float` constant, which also helps on the Pico, see section 11). The engine also gained an explicit `#include <iterator>`: it used `std::begin`/`std::end` and had been getting the header only by accident through an unused `#include <vector>`.
+**Fixed:** macOS `-framework` flags are now conditional on `if(APPLE)`; PortAudio is found via `pkg-config`, then `/opt/homebrew` and `/usr/local`, then the bundled copy, so Apple Silicon works without edits; the unneeded `ASM` language and the empty `dsp_pipeline.cpp` were removed from the build; the engine is a reusable library with tests registered in `ctest`; and the engine no longer uses `M_PI` (it uses a `float` constant, which also helps on the boards, see section 11). The engine also gained an explicit `#include <iterator>`: it used `std::begin`/`std::end` and had been getting the header only by accident through an unused `#include <vector>`.
 
 **Since then:** the full CMake build, including the desktop app, has been built on macOS (see the verification note in section 7).
 
@@ -848,35 +848,40 @@ Freeze captures the *oldest* 4,096 samples in the 500 ms echo buffer (audio from
 
 ---
 
-## 11. Toward the Raspberry Pi Pico
+## 11. Toward the Daisy Seed
 
-The hardware target is the **WeAct RP2350B Core**: an RP2350B with two Cortex-M33 cores at 150 MHz, a single-precision FPU, 520 KB RAM and 48 GPIO. It replaced the earlier RP2040 (Cortex-M0+ at 133 MHz, no FPU, 264 KB) because the panel needs about 32 GPIO; [HARDWARE_PLAN.md](HARDWARE_PLAN.md) has the comparison, pin budget and shopping list. The first step of the port is not audio I/O but a go/no-go question: **can the chip run the engine in real time at all?** `pico/main_pico.cpp` answers it by running the engine on synthetic input on the device and reporting how much of the real-time budget it uses.
+The hardware target is the **Electrosmith Daisy Seed 65MB**: an STM32H750 with one Cortex-M7 core at 480 MHz, a single- and double-precision FPU, an audio codec on the board, 512 KB AXI SRAM plus 64 MB SDRAM, 128 KB internal flash plus 8 MB QSPI, and 31 GPIO. It replaced the WeAct RP2350B Core (two Cortex-M33 cores at 150 MHz, 520 KB RAM, 48 GPIO), mainly because the RP2350B needed a separate WM8731 codec that made it cost about as much as a Daisy Seed; [HARDWARE_PLAN.md](HARDWARE_PLAN.md) has the comparison, audio design, pin map and shopping list. The first step of the port is not audio I/O but a go/no-go question: **can the board run the engine in real time at all?** `daisy/main_daisy.cpp` answers it by running the engine on synthetic input on the device and reporting how much of the real-time budget it uses.
 
 ### The budget
 
-At 44.1 kHz a 64-sample block lasts 64 / 44,100 ≈ **1,451 µs**. At 150 MHz that is about **218,000 CPU cycles per block, or about 3,400 cycles per sample** (on an RP2040 at 133 MHz: about 193,000 and 3,000), to run every stage, plus the audio driver, display, and buttons. The benchmark prints microseconds per block and the percentage of 1,451 µs used. Rough guide: under 50 % is comfortable, 50–80 % is tight, and over 100 % cannot work without optimisation.
+libDaisy runs the codec at 48 kHz, so a 64-sample block lasts 64 / 48,000 ≈ **1,333 µs**. At 480 MHz that is about **640,000 CPU cycles per block, or 10,000 cycles per sample**, to run every stage, plus the audio driver, display, and controls. The benchmark prints microseconds per block and the percentage of 1,333 µs used. Rough guide: under 50 % is comfortable, 50–80 % is tight, and over 100 % cannot work without optimisation.
 
 ### Running the benchmark
 
-The instructions are in the header of `pico/CMakeLists.txt`. In short:
+The instructions are in the header of `daisy/Makefile`. In short:
 
-1. Install the Arm toolchain and clone the [Pico SDK](https://github.com/raspberrypi/pico-sdk) (with submodules); set `PICO_SDK_PATH`.
-2. `cmake -S pico -B pico/build -DCMAKE_BUILD_TYPE=Release && cmake --build pico/build` (or `.agents/skills/vocal-fx-processor/scripts/build_pico.sh`). This builds for the WeAct RP2350B Core; add `-DPICO_BOARD=pico2` or `-DPICO_BOARD=pico` for a Raspberry Pi Pico 2 or original Pico.
-3. Hold BOOT (BOOTSEL on a Pico), plug the board in, and copy `pico/build/vocal_pico_bench.uf2` to the drive that appears (`RP2350`, or `RPI-RP2` for an RP2040).
-4. Open the USB serial port (macOS: `screen /dev/tty.usbmodem* 115200`).
+1. Install the Arm toolchain (`arm-none-eabi-gcc`) and `dfu-util`, clone [libDaisy](https://github.com/electro-smith/libDaisy) (with submodules) and build it once with `make`.
+2. `make -C daisy LIBDAISY_DIR=~/src/libDaisy` (or `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh`) builds `daisy/build/vocal_daisy_bench.bin`.
+3. Put the Seed in DFU mode (hold BOOT, press and release RESET, release BOOT), then flash with `make -C daisy LIBDAISY_DIR=~/src/libDaisy program-dfu` (or `build_daisy.sh program-dfu`).
+4. Open the USB serial port (macOS: `screen /dev/tty.usbmodem* 115200`). The program waits for the port to open before it starts.
 
-It repeats a table of results every few seconds covering: a baseline with optional effects off, baseline plus pitch shift, each of the three presets, and a worst case (MEGATRON + pitch shift + freeze).
+It repeats a table of results every few seconds covering: a baseline with optional effects off, baseline plus pitch shift, each of the three presets, and a worst case (MEGATRON + pitch shift + freeze). The scenarios and timing loop live in `include/engine_bench.hpp`, shared with the previous board's benchmark (below).
 
-> **Not yet run on hardware.** The benchmark builds with Pico SDK 2.3.1 for the WeAct RP2350B Core (and for the original Pico), and its logic was run on a desktop with a stand-in for the SDK's timing functions. That says nothing about speed on the chip, since a desktop CPU is hundreds of times faster. Treat the first on-device run as the real measurement.
+> **Not yet run on hardware.** The benchmark builds against libDaisy, but no Seed has run it yet. Treat the first on-device run as the real measurement.
+
+### The previous board's benchmark (`pico/`)
+
+`pico/main_pico.cpp` is the same benchmark for the WeAct RP2350B Core, the board planned before the Daisy Seed. It stays in the repo and builds with the Pico SDK: `.agents/skills/vocal-fx-processor/scripts/build_pico.sh` (header of `pico/CMakeLists.txt` for details; `-DPICO_BOARD=pico2` or `pico` for a Raspberry Pi Pico 2 or original Pico). Flash by holding BOOT and copying `pico/build/vocal_pico_bench.uf2` to the `RP2350` drive (`RPI-RP2` on an RP2040), then read the serial port as above. Its budget is 1,451 µs per 64-sample block at 44.1 kHz, about 3,400 cycles per sample at 150 MHz. It has not been run on hardware either.
 
 ### Things to expect and what to try if it is too slow
 
-- **Floating point.** The RP2350's Cortex-M33 has a single-precision FPU, so `+ − × ÷` and square roots on `float` are single instructions. Library functions (`sinf`, `tanhf`, …) are still dozens of instructions each, and an RP2040's M0+ has no FPU at all, so there every `float` operation runs in software. The engine does `sinf` twice per sample (chorus LFO, ring modulator), `tanhf` once, plus `floorf`, `fmodf`, `roundf` and, while the pitch shifter is crossfading, `cosf`. These are the first suspects.
-- **Already done:** `M_PI` is a 64-bit `double`, so expressions such as `2.0f * M_PI * …` silently forced slow double-precision maths. The engine now uses a `float` constant (`kTwoPi`) instead.
-- **Candidate optimisations**, in rough order of expected payoff (measure after each change): replace the two per-sample `sin` calls with lookup tables or a recurrence oscillator; replace `tanh` with a cheap polynomial or lookup table; use a lookup table for the pitch crossfade `cos`; drop to a 22.05 kHz sample rate (halves the per-second work); use the second core for part of the chain; move hot paths to fixed-point integer arithmetic. The Pico SDK also ships optimised software float routines, which the benchmark already benefits from.
-- **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB: 35 % of the RP2350's 520 KB, 69 % of an RP2040's 264 KB)**, before the SDK's own needs, stacks, and audio I/O buffers. It must be a global or static object (`main_pico.cpp` does this), never a local variable. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
-- **I/O.** A WM8731 codec over I²S (with an op-amp mic preamp in front), an SSD1306 128×64 OLED (the simulator's is already that size), and the simulator's controls: eleven encoders and three footswitches. The audio design, core split, latency and parts are in [HARDWARE_PLAN.md](HARDWARE_PLAN.md); the pin map is `include/hw_pinout.hpp` (33 of 48 GPIO). Encoders (not pots) were chosen so that presets can move them.
-- **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine`, read controls from encoders and footswitches, and call `processBlock` from a DMA or I²S interrupt, the same shape as the desktop app.
+- **Floating point.** The Cortex-M7's FPU does `+ − × ÷` and square roots on `float` in single instructions. Library functions (`sinf`, `tanhf`, …) are still dozens of instructions each. The engine does `sinf` twice per sample (chorus LFO, ring modulator), `tanhf` once, plus `floorf`, `fmodf`, `roundf` and, while the pitch shifter is crossfading, `cosf`. These are the first suspects.
+- **Already done:** `M_PI` is a 64-bit `double`, so expressions such as `2.0f * M_PI * …` silently forced double-precision maths, which is slower even on the M7's double-precision FPU and runs in software on a single-precision one such as the RP2350's. The engine now uses a `float` constant (`kTwoPi`) instead.
+- **Candidate optimisations**, in rough order of expected payoff (measure after each change): replace the two per-sample `sin` calls with lookup tables or a recurrence oscillator; replace `tanh` with a cheap polynomial or lookup table; use a lookup table for the pitch crossfade `cos`; drop to a lower sample rate (24 kHz halves the per-second work); put hot code and data in the M7's tightly coupled memory (ITCM/DTCM); move hot paths to fixed-point integer arithmetic.
+- **Memory.** `sizeof(DemonicEngine)` is **186,824 bytes (about 182 KB: 36 % of the 512 KB AXI SRAM)**, before libDaisy's own needs, stacks, and audio buffers. It must be a global or static object (`main_daisy.cpp` does this), never a local variable. libDaisy's linker script puts it in AXI SRAM; do not move it to the much slower SDRAM. If RAM gets tight: shorten the delay and reverb buffers, or store them as 16-bit integers.
+- **Program size.** The internal flash is 128 KB. If the firmware outgrows it, use the Daisy bootloader and run from QSPI or SRAM (libDaisy's `APP_TYPE`).
+- **I/O.** The Seed's own codec (with an op-amp mic preamp in front, since its input is line level), an SSD1306 128×64 OLED (the simulator's is already that size), WS2812 LED rings driven over SPI (the STM32 has no PIO), and the simulator's controls: eleven encoders and three footswitches. The audio design, firmware layout, latency and parts are in [HARDWARE_PLAN.md](HARDWARE_PLAN.md); the pin map is `include/hw_pinout.hpp` (28 of 31 GPIO). Encoders (not pots) were chosen so that presets can move them.
+- **Structure.** Because the engine has no PortAudio or raylib dependency, the finished firmware can create a `DemonicEngine` and call `processBlock` from libDaisy's audio callback, with encoders, footswitches, LEDs and the OLED handled in the main loop: the same shape as the desktop app's audio and UI threads.
 
 ---
 
