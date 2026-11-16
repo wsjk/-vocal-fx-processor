@@ -2,7 +2,7 @@
 
 A real-time "demonic" vocal effects engine and guitar-pedal-style processor written in C++17.
 
-Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the whole pedal (OLED, encoders, footswitches), and a hardware-agnostic DSP core intended for an RP2350 board (WeAct RP2350B Core).
+Talk or sing into a microphone and the engine turns your voice into a pitch-shifted, sub-octave, robotic, bit-crushed, echoing creature. There are two parts: a desktop app that simulates the whole pedal (OLED, encoders, footswitches), and a hardware-agnostic DSP core intended for an Electrosmith Daisy Seed.
 
 <p align="center">
   <img src="docs/images/simulator.png" alt="The desktop simulator: the pedal enclosure with a 128x64 OLED showing the preset name and waveform, eleven encoders with LED rings in VOICE, MANGLE and SPACE panels, and PRESET, FREEZE and BYPASS footswitches" width="720">
@@ -33,7 +33,7 @@ Talk or sing into a microphone and the engine turns your voice into a pitch-shif
 
 These are tracked in [Developer Guide §10](docs/DEVELOPER_GUIDE.md#10-code-review-known-issues):
 
-- **The Pico build is a benchmark only.** There is no audio-capable firmware yet.
+- **The board builds are benchmarks only** (`daisy/`, and `pico/` for the previous board). There is no audio-capable firmware yet.
 
 ---
 
@@ -152,11 +152,11 @@ ctest --test-dir build-tests --output-on-failure
 
 ## Daisy Seed
 
-`daisy/` cross-compiles the same **benchmark** for the Electrosmith Daisy Seed, the planned board, with [libDaisy](https://github.com/electro-smith/libDaisy). It reports how much of the 1,333 µs budget (64 samples at 48 kHz) each block uses. Setup, build and flashing instructions are in the header of [`daisy/Makefile`](daisy/Makefile); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) has the board, pins and parts. It has not yet been run on hardware.
+`daisy/` cross-compiles the same **benchmark** for the Electrosmith Daisy Seed, the target board, with [libDaisy](https://github.com/electro-smith/libDaisy). It reports how much of the 1,333 µs budget (64 samples at 48 kHz) each block uses. Setup, build and flashing instructions are in the header of [`daisy/Makefile`](daisy/Makefile); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) has the board, pins and parts, and [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-daisy-seed) the budget and what to try if it is too slow. It has not yet been run on hardware.
 
-## Raspberry Pi Pico
+## Raspberry Pi Pico (previous board)
 
-`pico/` is a separate CMake project that cross-compiles a **benchmark**. It runs the engine on synthetic input and reports, over USB serial, how much of the 1,451 µs real-time budget each 64-sample block uses. It builds for the **WeAct RP2350B Core** (RP2350B: Cortex-M33 with FPU, 520 KB RAM, 48 GPIO); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) explains the choice, the WM8731 audio design and the pin map, and lists what to buy. Setup, build and flashing instructions are in the header of [`pico/CMakeLists.txt`](pico/CMakeLists.txt) and in [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-raspberry-pi-pico). The benchmark has not yet been run on hardware.
+`pico/` is a separate CMake project that cross-compiles the same **benchmark** for the **WeAct RP2350B Core** (RP2350B: Cortex-M33 with FPU, 520 KB RAM, 48 GPIO), the board planned before the Daisy Seed. It reports, over USB serial, how much of the 1,451 µs real-time budget (64 samples at 44.1 kHz) each block uses. [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) explains why the Daisy Seed replaced it. Setup, build and flashing instructions are in the header of [`pico/CMakeLists.txt`](pico/CMakeLists.txt) and in [Developer Guide §11](docs/DEVELOPER_GUIDE.md#the-previous-boards-benchmark-pico). The benchmark has not yet been run on hardware.
 
 ---
 
@@ -169,7 +169,7 @@ vocal-fx-processor/
 ├── AGENTS.md                   Instructions for coding agents (CLAUDE.md is a symlink to it)
 ├── docs/
 │   ├── USER_GUIDE.md           End-user guide: controls, parameters, presets, recipes, troubleshooting
-│   ├── DEVELOPER_GUIDE.md      Architecture, stage-by-stage DSP walkthrough, C++ primer, known issues, Pico notes
+│   ├── DEVELOPER_GUIDE.md      Architecture, stage-by-stage DSP walkthrough, C++ primer, known issues, Daisy Seed port notes
 │   └── HARDWARE_PLAN.md        Board choice (Daisy Seed), audio design, pin map, shopping list, next steps
 ├── include/
 │   ├── demonic_engine.hpp      DemonicEngine class and VocalPreset struct
@@ -194,7 +194,7 @@ vocal-fx-processor/
 │   └── main_daisy.cpp          Daisy Seed real-time budget benchmark
 ├── pico/
 │   ├── CMakeLists.txt          Separate Pico SDK project (setup notes in its header)
-│   └── main_pico.cpp           RP2350 real-time budget benchmark
+│   └── main_pico.cpp           RP2350 real-time budget benchmark (previous board)
 ├── cmake/version.cmake         Version number from the latest v* git tag
 ├── .github/                    Release workflow: tags and publishes a GitHub Release on every merge to main
 ├── .agents/skills/vocal-fx-processor/   Agent runbook, references and build scripts
@@ -206,6 +206,6 @@ vocal-fx-processor/
 ## Documentation
 
 - **[docs/USER_GUIDE.md](docs/USER_GUIDE.md):** using the pedal: controls, every encoder, presets, Freeze, Bypass, sound recipes, troubleshooting.
-- **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md):** how the code works, written for Python programmers new to C++. It covers threads and atomics, each DSP stage, the build system, how to extend the engine, tests, known issues and the Pico port.
+- **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md):** how the code works, written for Python programmers new to C++. It covers threads and atomics, each DSP stage, the build system, how to extend the engine, tests, known issues and the Daisy Seed port.
 - **[docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md):** the planned hardware pedal: why the Daisy Seed 65MB, the audio path and mic preamp, firmware layout and latency, the pin map, what to buy, and next steps.
-- **[Releases](https://github.com/wsjk/-vocal-fx-processor/releases):** the changelog. Every merge to `main` is tagged and released, and the notes list the merged PRs. The version shows in the simulator's title bar and the Pico benchmark's output.
+- **[Releases](https://github.com/wsjk/-vocal-fx-processor/releases):** the changelog. Every merge to `main` is tagged and released, and the notes list the merged PRs. The version shows in the simulator's title bar and the board benchmarks' output.
