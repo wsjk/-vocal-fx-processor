@@ -332,7 +332,62 @@ static void test_extremes_stay_bounded() {
     check(finite && peak <= 1.0, "fold 5, drive 12, feedback 1.05 for 60 s: peak %.3f, all finite", peak);
 }
 
+// Like render(), but at any sample rate; returns every output sample.
+template <class Gen>
+static std::vector<float> render_at(DemonicEngine& e, double fs, Gen gen, double seconds) {
+    const size_t total = static_cast<size_t>(seconds * fs);
+    std::vector<float> in(kBlock), out(kBlock), all;
+    all.reserve(total + kBlock);
+    for (size_t n = 0; n < total; n += kBlock) {
+        for (size_t k = 0; k < kBlock; ++k) in[k] = gen(n + k);
+        e.processBlock(in.data(), out.data(), kBlock);
+        all.insert(all.end(), out.begin(), out.end());
+    }
+    return all;
+}
+
+static void test_same_sound_at_48k() {
+    std::printf("\n-- Sample rate: 48 kHz (Daisy Seed) must sound like 44.1 kHz (desktop) --\n");
+    double echoAt[2], toneRms[2], pitchErr[2];
+    const double rates[2] = {44100.0, 48000.0};
+    for (int r = 0; r < 2; ++r) {
+        const double fs = rates[r];
+        {   // Echo time: one click in, find the echo.
+            DemonicEngine e(static_cast<float>(fs));
+            isolate(e); e.setDelayMix(0.5f); e.setDelayFeedback(0.0f);
+            auto out = render_at(e, fs, [](size_t n) { return n == 0 ? 0.9f : 0.0f; }, 0.5);
+            size_t from = static_cast<size_t>(0.1 * fs), best = from;
+            for (size_t i = from; i < out.size(); ++i) if (std::fabs(out[i]) > std::fabs(out[best])) best = i;
+            echoAt[r] = 1000.0 * best / fs;
+        }
+        {   // Tone filter: level of a 3 kHz sine after the always-on low-pass.
+            DemonicEngine e(static_cast<float>(fs));
+            isolate(e);
+            auto out = render_at(e, fs, [&](size_t n) { return 0.5f * std::sin(2.0 * kPi * 3000.0 * n / fs); }, 1.0);
+            double sum = 0; size_t from = out.size() / 2;
+            for (size_t i = from; i < out.size(); ++i) sum += out[i] * out[i];
+            toneRms[r] = std::sqrt(sum / (out.size() - from));
+        }
+        {   // Pitch shifter: -500 cents on a 220 Hz sine.
+            DemonicEngine e(static_cast<float>(fs));
+            isolate(e); e.setPitchShift(-500.0f);
+            auto out = render_at(e, fs, [&](size_t n) { return 0.5f * std::sin(2.0 * kPi * 220.0 * n / fs); }, 2.5);
+            std::vector<float> tail(out.end() - static_cast<long>(fs), out.end());
+            // dominant_freq() assumes 44.1 kHz, so measure in "44.1 kHz Hz" and convert back.
+            double got = dominant_freq(tail, 60.0 * 44100.0 / fs, 900.0 * 44100.0 / fs) * fs / 44100.0;
+            pitchErr[r] = 1200.0 * std::log2(got / (220.0 * std::pow(2.0, -500.0 / 1200.0)));
+        }
+    }
+    check(std::fabs(echoAt[0] - 200.0) < 1.0 && std::fabs(echoAt[1] - 200.0) < 1.0,
+          "echo arrives after 200 ms at both rates (44.1 kHz: %.1f ms, 48 kHz: %.1f ms)", echoAt[0], echoAt[1]);
+    const double db = 20.0 * std::log10(toneRms[1] / toneRms[0]);
+    check(std::fabs(db) < 0.5, "tone filter passes 3 kHz at the same level (48 kHz vs 44.1 kHz: %+.2f dB)", db);
+    check(std::fabs(pitchErr[0]) < 60.0 && std::fabs(pitchErr[1]) < 60.0,
+          "-500 cents lands on the right note at both rates (error %+.1f / %+.1f cents)", pitchErr[0], pitchErr[1]);
+}
+
 int main() {
+    test_same_sound_at_48k();
     test_pitch_shift();
     test_pitch_shift_voice_like();
     test_pitch_shift_is_bounded_and_clickless();

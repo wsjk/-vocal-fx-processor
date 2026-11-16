@@ -18,6 +18,11 @@ struct VocalPreset {
 
 class DemonicEngine {
 public:
+    // Highest sample rate the fixed-size buffers are sized for: the Daisy Seed's 48 kHz. Every delay and
+    // filter is set in seconds and converted for the actual rate, so 44.1 kHz and 48 kHz sound the same.
+    // Above this rate the engine still runs safely, but the time-based effects get shorter.
+    static constexpr float kMaxSampleRate = 48000.0f;
+
     DemonicEngine(float sampleRate);
     void processBlock(const float* input, float* output, size_t numFrames);
     
@@ -54,7 +59,36 @@ public:
     const VocalPreset& getPreset(int index) const { return presets[((index % NUM_PRESETS) + NUM_PRESETS) % NUM_PRESETS]; }
 
 private:
+    // Buffer capacities, in samples at kMaxSampleRate. The lengths actually used are the *Len members.
+    static constexpr size_t kPitchBufSize   = 2048;    // > pitch sweep (40 ms) + margin
+    static constexpr size_t kChorusBufSize  = 2048;    // > chorus delay (10 ms + 1.5 ms swing)
+    static constexpr size_t kEchoBufSize    = 24000;   // 500 ms
+    static constexpr size_t kFreezeBufSize  = 4459;    // ~93 ms (4096 samples at 44.1 kHz)
+    static constexpr size_t kReverbBufSize  = 17834;   // ~372 ms (16384 samples at 44.1 kHz)
+
     float sampleRate;
+
+    // Lengths and delays in samples for this sample rate (set once in the constructor).
+    float pitchWindow;      // pitch shifter sweep length
+    float chorusDelay;      // chorus centre delay
+    float chorusSwing;      // chorus delay swing (+/-)
+    size_t echoLen;         // feedback delay ring length
+    size_t echoDelay;       // echo tap: how far behind the write head
+    size_t freezeLen;       // freeze loop length
+    size_t reverbLen;       // reverb ring length
+    size_t reverbDelay1;    // reverb taps
+    size_t reverbDelay2;
+
+    // One-pole filter coefficients for this sample rate (tuned at 44.1 kHz; see rateCoef()).
+    float envCoef;          // input envelope follower
+    float pitchBlendCoef;   // pitch shifter on/off fade
+    float subDetCoef;       // sub-octave detection low-pass
+    float subAttackCoef;    // sub-octave detection envelope, rising
+    float subReleaseCoef;   // ... falling
+    float subFilterCoef;    // sub-octave square-wave smoothing
+    float toneCoef;         // tone low-pass (stage 6)
+    float dcPole;           // DC blocker pole (stage 10)
+
     float pitchCents;
     float subBlend;
     float driveDb;
@@ -88,27 +122,27 @@ private:
     int decimationCounter;
     float inputEnvelope;
 
-    // Pitch shifter: two crossfaded, sweeping delay taps (2048 samples >= window + margin)
-    float pitchBuffer[2048];
+    // Pitch shifter: two crossfaded, sweeping delay taps
+    float pitchBuffer[kPitchBufSize];
     size_t pitchWriteHead;
     float pitchPhase;      // 0..1, position of tap 1 within the sweep
     float pitchBlend;      // 0 = bypass, 1 = fully shifted (smoothed to avoid clicks)
 
     // Chorus delay line
-    float delayLine[2048];
+    float delayLine[kChorusBufSize];
     size_t delayWriteHead;
     float lfoChorusPhase;
 
-    // Feedback Delay Buffer (~500ms for Echo / Infinite Repeat)
-    float feedbackDelayBuffer[22050];
+    // Feedback Delay Buffer (500 ms ring, 200 ms echo, for Echo / Infinite Repeat)
+    float feedbackDelayBuffer[kEchoBufSize];
     size_t feedbackDelayWriteHead;
 
-    // Spectral Freeze Buffer (~4096 samples for Infinite Sustain Drone)
-    float freezeBuffer[4096];
+    // Spectral Freeze Buffer (~93 ms loop for Infinite Sustain Drone)
+    float freezeBuffer[kFreezeBufSize];
     float freezeReadHead;
 
     // Reverb buffer
-    float reverbBuffer[16384];
+    float reverbBuffer[kReverbBufSize];
     size_t reverbWriteHead;
 
     // True bypass
