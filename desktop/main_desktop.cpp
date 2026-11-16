@@ -398,7 +398,7 @@ int main() {
         draw_screw(E.x + 16, E.y + 16);            draw_screw(E.x + E.w - 16, E.y + 16);
         draw_screw(E.x + 16, E.y + E.h - 16);      draw_screw(E.x + E.w - 16, E.y + E.h - 16);
         ui_text("DEMONIC", 60, 30, 26, kSilk, true);
-        ui_text("VOCAL FX PROCESSOR  /  RP2040", 62, 64, 9, kSilkDim);
+        ui_text("VOCAL FX PROCESSOR  /  DAISY SEED", 62, 64, 9, kSilkDim);
         draw_led(L.led_power, kRed, true);
 
         draw_jack(L.jack_out);

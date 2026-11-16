@@ -2,7 +2,7 @@
 
 The Vocal FX Processor turns your microphone into a real-time "demonic" vocal effects pedal. You talk or sing into a mic, and what comes out of your headphones is a growling, robotic, glitchy, echoing version of your voice.
 
-The desktop app draws the pedal itself: an enclosure with a small OLED screen, eleven **encoders** (knobs with a ring of lights showing their value), three **footswitches** (Preset, Freeze and Bypass), and the jacks a real unit would have. You play it with the mouse and keyboard. Everything runs live with very little delay.
+The desktop app draws the pedal itself: an enclosure with a small OLED screen, twelve **encoders** (knobs with a ring of lights showing their value), three **footswitches** (Preset, Freeze and Bypass), and the jacks a real unit would have. You play it with the mouse and keyboard. Everything runs live with very little delay.
 
 > **Status note.** This guide describes the code as it exists in the repository today. A few things behave differently from what you might expect. They are collected in [Known limitations](#known-limitations) so you are not surprised.
 
@@ -95,10 +95,10 @@ The build looks for PortAudio in the standard places on both Intel and Apple Sil
 │ │  ~~~ waveform ~~~  │  │   +0.0 st      11.0 dB        85%        │  │
 │ │ ████ input level   │  └──────────────────────────────────────────┘  │
 │ └────────────────────┘                                                │
-│ ┌─ MANGLE ─────────────────────────┐  ┌─ SPACE ─────────────────────┐ │
-│ │ ROBOT  CLANK RATE  FOLD  DECIMATE │  │ DELAY FB  DELAY MIX  REVERB │ │
-│ │                                   │  │ WET/DRY                     │ │
-│ └───────────────────────────────────┘  └─────────────────────────────┘ │
+│ ┌─ MANGLE ──────────────────────┐ ┌─ SPACE ────────────────────────┐ │
+│ │ ROBOT  CLANK RATE  FOLD  DECIM │ │ ECHO TIME  DELAY FB  DELAY MIX │ │
+│ │                                │ │ REVERB  WET/DRY                │ │
+│ └────────────────────────────────┘ └────────────────────────────────┘ │
 │         ●                      ●                      ●               │
 │      (PRESET)              (FREEZE)               (BYPASS)            │
 └───────────────────────────────────────────────────────────────────────┘
@@ -112,7 +112,7 @@ The build looks for PortAudio in the standard places on both Intel and Apple Sil
 - **Waveform**: a very short snapshot (about 3 milliseconds) of the sound *coming out* of the processor. It scrolls quickly and mostly serves as a "yes, it's alive" indicator.
 - **Bar along the bottom**: your **microphone input level**. If this bar never moves when you talk, the app is not hearing your mic (see [Troubleshooting](#troubleshooting)).
 
-**The encoders** sit in three panels: **VOICE** (pitch, drive, sub-octave), **MANGLE** (robot clank, its rate, wavefolder, decimation) and **SPACE** (echo, reverb, wet/dry; all four in one row on screen). The orange ring around each encoder shows its value: empty at the minimum, a full arc at the maximum. **PITCH** is different: its ring grows from the top (0, off) to the left for lower and to the right for higher. The current value is printed under each encoder. The **DELAY FB** ring turns red above 100%, where the echo grows without limit.
+**The encoders** sit in three panels: **VOICE** (pitch, drive, sub-octave), **MANGLE** (robot clank, its rate, wavefolder, decimation) and **SPACE** (echo time, echo feedback and level, reverb, wet/dry; all five in one row on screen). The orange ring around each encoder shows its value: empty at the minimum, a full arc at the maximum. **PITCH** is different: its ring grows from the top (0, off) to the left for lower and to the right for higher. The current value is printed under each encoder. The **DELAY FB** ring turns red above 100%, where the echo grows without limit.
 
 **The footswitches** and their lights:
 
@@ -138,7 +138,7 @@ The jacks, USB port and red power light along the top are decoration: the app al
 
 Encoder tips:
 
-- Scrolling moves in clean steps: one semitone for PITCH, 0.5 dB for DRIVE, 5 Hz for CLANK RATE, 5% for most amounts, 2.5% for DELAY FB. Dragging is smooth, for anything in between.
+- Scrolling moves in clean steps: one semitone for PITCH, 0.5 dB for DRIVE, 5 Hz for CLANK RATE, 20 ms for ECHO TIME, 5% for most amounts, 2.5% for DELAY FB. Dragging is smooth, for anything in between.
 - The encoders stop at the ends of their range.
 - **PITCH** snaps to exactly 0 when you drag close to the top, which switches the pitch shifter fully off.
 - Changes are heard immediately, even mid-word.
@@ -153,15 +153,16 @@ Your voice passes through a chain of effects, always in the same order. Knowing 
 |---|---|---|
 | 0 | **Noise gate** | Anything quieter than a fixed threshold (about −34 dB below full scale) is treated as silence, so room noise and breath do not get processed. |
 | 0b | **Pitch shifter** | Shifts your voice up or down by as much as an octave. Completely off (and adds no delay) when set to 0. *(Encoder: PITCH.)* |
+| 0c | **Harmony** | A second shifted copy of your voice, a fixed interval from the pitch-shifted one (a fifth above in CYBER DEMON). *(Presets only; no encoder.)* |
 | 1 | **Chorus doubler** | Adds a faintly delayed, slowly wobbling copy of your voice, like a second person singing along. Always on; not adjustable. |
 | 2 | **Sub-octave** | Follows your voice's pitch and mixes in a low, filtered square-wave layer one octave below it, louder when you are louder. *(Encoder: SUB OCT.)* |
 | 3 | **Ring modulator ("Robot Clank")** | Multiplies your voice by a low-frequency tone, producing a metallic, robotic, clanking character. *(Encoders: ROBOT, CLANK RATE.)* |
 | 4 | **Drive + Wavefolder** | Drive squashes the signal into a gritty saturation. The wavefolder then bends the waveform back on itself for harsh, synthetic overtones. *(Encoders: DRIVE, FOLD.)* |
 | 5 | **Decimation / bit-crush** | Lowers the effective sample rate and resolution for a lo-fi, digital-crunch sound. *(Encoder: DECIMATE.)* |
 | 6 | **Tone filter** | A fixed low-pass filter (roughly 3 kHz) that tames the harshness created by the earlier stages. Always on. |
-| 7 | **Spectral Freeze** | Optionally overlays a looping "drone" captured from your recent audio. *(Footswitch: FREEZE.)* |
-| 8 | **Echo** | A repeating echo (about 0.2 seconds between repeats). *(Encoders: DELAY FB, DELAY MIX.)* |
-| 9 | **"Catacomb" reverb** | A cavernous multi-echo tail. *(Encoder: REVERB.)* |
+| 7 | **Spectral Freeze** | Optionally overlays a looping "drone": the last second of your sound, on repeat. *(Footswitch: FREEZE.)* |
+| 8 | **Echo** | A repeating echo, from 0.02 to 2 seconds between repeats. *(Encoders: ECHO TIME, DELAY FB, DELAY MIX.)* |
+| 9 | **"Catacomb" reverb** | A long, dark, cavernous reverb tail. *(Encoder: REVERB.)* |
 | 10 | **DC blocker** | A safety filter that removes inaudible offset the earlier stages can create. Always on. |
 | — | **Wet/Dry mix** | Blends the processed signal with your untouched voice. *(Encoder: WET/DRY.)* |
 
@@ -180,9 +181,10 @@ Your voice passes through a chain of effects, always in the same order. Knowing 
 | **CLANK RATE** | 10 – 200 Hz | 45 | The frequency of the ring-modulation tone. | Low = slow, throbbing tremolo-like clank. High = harsher, more metallic. Speaking louder pushes the rate up slightly. Only audible when ROBOT is above 0. |
 | **FOLD** (wavefolder) | 0 – 5 | 1.0 | Amount of waveform folding (harsh, synthetic overtones). Below about 0.1 it switches off. | **Keep this at 2 or below** unless you want a very loud, harsh output. Above that, the output is often pushed up to the full-scale cap. |
 | **DECIMATE** | x1 – x6 | x1 | Lo-fi crunch. 1 = off. 2 ≈ half the sample rate, 3 ≈ one third, up to 6. | Only whole numbers count (x2.5 behaves like x2). A fixed ~6-bit quantisation is always applied, so even at 1 the sound has a slightly gritty edge. |
+| **ECHO TIME** | 20 – 2000 ms | 200 ms | Time between the echo repeats. | One click is 20 ms. Turning it while echoes are playing bends their pitch, like a tape delay; it glides rather than jumps, so it never clicks. |
 | **DELAY FB** (feedback) | 0 – 105% | 60% | How much of each echo is fed back to create further repeats. | Below 100% the repeats fade out. **At 100% they never fade. Above 100% (red ring) they build up to a loud, steady level.** Turn it back below 100% to stop it. |
-| **DELAY MIX** | 0 – 100% | 35% | How loud the echoes are compared to the direct sound. | Delay time is fixed at about 200 ms. |
-| **REVERB** ("catacomb") | 0 – 100% | 45% | How much of the cavernous echo tail is mixed in. | Fixed character (distinct echoes at about 120 ms and 270 ms), more like a stone-room slapback than a smooth hall. |
+| **DELAY MIX** | 0 – 100% | 35% | How loud the echoes are compared to the direct sound. | Set the spacing with ECHO TIME. |
+| **REVERB** ("catacomb") | 0 – 100% | 45% | How much of the reverb tail is mixed in. | A smooth, dark tail that lasts a few seconds, like a stone crypt. Its length and darkness are fixed. |
 | **WET/DRY** | 0 – 100% | 85% | 0% = only your untouched voice. 100% = only the processed sound. | Lower values are a handy way to keep words intelligible. |
 
 ---
@@ -191,13 +193,15 @@ Your voice passes through a chain of effects, always in the same order. Knowing 
 
 There are three built-in presets. Press `P` (or click the PRESET footswitch) to cycle through them. Loading a preset turns the encoders to its values; you can then adjust any of them, and your changes last until the next preset is loaded.
 
-| Preset | Drive | Sub | Robot | Rate | Fold | Decim | Delay FB | Delay Mix | Reverb | Wet/Dry |
-|---|---|---|---|---|---|---|---|---|---|---|
-| **DEMONIC GROWL** | 11 | 0.85 | 0.00 | 45 | 1.0 | 1 | 0.60 | 0.35 | 0.45 | 0.85 |
-| **MEGATRON** | 6 | 0.20 | 0.95 | 75 | 3.0 | 3.5 (→3) | 0.40 | 0.20 | 0.20 | 0.90 |
-| **CYBER DEMON** | 10 | 0.70 | 0.65 | 55 | 2.5 | 2 | 0.75 | 0.40 | 0.50 | 0.85 |
+| Preset | Drive | Sub | Robot | Rate | Fold | Decim | Echo time | Delay FB | Delay Mix | Reverb | Wet/Dry | Harmony |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **DEMONIC GROWL** | 11 | 0.85 | 0.00 | 45 | 1.0 | 1 | 200 ms | 0.60 | 0.35 | 0.45 | 0.85 | off |
+| **MEGATRON** | 6 | 0.20 | 0.95 | 75 | 3.0 | 3.5 (→3) | 200 ms | 0.40 | 0.20 | 0.20 | 0.90 | off |
+| **CYBER DEMON** | 10 | 0.70 | 0.65 | 55 | 2.5 | 2 | 200 ms | 0.75 | 0.40 | 0.50 | 0.85 | a fifth above, 40% |
 
 > Presets do not include PITCH; it stays wherever you leave it.
+>
+> **Harmony** is a second, shifted copy of your voice, a fixed interval away from the PITCH setting (so in CYBER DEMON it stays a fifth above whatever PITCH does). It has no encoder: only presets switch it on.
 >
 > MEGATRON and CYBER DEMON set **FOLD to 2.5–3**, which produces very loud output. Turn your volume down before loading them.
 
@@ -207,15 +211,15 @@ There are three built-in presets. Press `P` (or click the PRESET footswitch) to 
 
 Press **`F`** (or click the FREEZE footswitch) to toggle Freeze. While it is on, the footswitch light is red and the display shows `FREEZE` in red.
 
-**What it does:** at the moment you switch it on, the processor grabs a short slice (about 0.09 seconds) of recent audio from its echo memory — audio from roughly half a second earlier — and plays that slice on endless repeat, blended underneath your live voice (about 70% frozen loop, 30% live).
+**What it does:** the processor keeps recording the last second of its sound. At the moment you switch Freeze on, it stops recording and plays that second on endless repeat, blended underneath your live voice (about 70% frozen loop, 30% live). The end of the loop fades into its start, so there is no click where it repeats.
 
-**How it sounds:** a buzzing, sustained drone. Because the loop is so short, it repeats about 11 times per second, which gives the drone a gritty, fluttering texture rather than a smooth held note.
+**How it sounds:** a sustained drone that repeats once a second. A steady held note gives a smooth drone; a phrase gives a one-second loop of it.
 
 **How to use it well:**
 
 - Sing or say a sustained vowel ("ahhh"), keep going for a second, then press `F`. Stop singing; the drone continues.
-- If you press Freeze while silent, the captured slice is silence, so you will hear nothing from the drone.
-- Press `F` again to release. Pressing it again later captures a fresh slice.
+- If you press Freeze after a second of silence, the loop is silence, so you will hear nothing from the drone.
+- Press `F` again to release. Pressing it again later captures a fresh second.
 - The frozen loop passes through the echo and reverb stages afterwards, so it picks up their tails.
 
 ---
@@ -314,8 +318,9 @@ These are things you may notice and why:
 - **Sub-Octave needs a steady voice.** It follows your pitch, so it works best on one clear sung or spoken note. Whispers, breathy sounds, heavy noise, or several voices at once can make it flutter or drop out. It is silent when you are silent.
 - **Output protection is a hard limit.** Nothing goes past full scale, but high FOLD values and DELAY FB above 100% hit that limit and sound harshly clipped.
 - **Bypass is software bypass.** It is exact and click-free, but your voice still passes through the computer. For zero-delay monitoring use your audio interface's Direct Monitor.
-- **Mono, 44.1 kHz only**, using the default audio devices.
-- **Fixed echo and reverb timings.** Only their amounts can be adjusted.
+- **Mono, 44.1 kHz only**, using the default audio devices. (The planned hardware runs at 48 kHz and sounds the same.)
+- **Fixed reverb character.** Only its amount can be adjusted. The echo time is adjustable (ECHO TIME).
+- **Harmony has no encoder.** Only presets switch it on.
 - **No saving of settings.** Your encoder changes are lost when you load another preset or restart.
 - **Only tested on macOS-style setups.** The desktop app has not been built or tested on Linux or Windows.
 - **No hardware version yet.** The simulated enclosure shows what the pedal could look like; it is not a finished hardware design. The planned board is an Electrosmith Daisy Seed (see `docs/HARDWARE_PLAN.md`). The repository includes a benchmark program for finding out whether it can run the effects in real time (see the Developer Guide), but there is no audio-capable firmware yet.

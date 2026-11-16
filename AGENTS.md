@@ -1,26 +1,27 @@
 # Vocal FX Processor — Agent Instructions
 
-Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (benchmark in `daisy/`). `pico/` keeps the benchmark for the previous board, the WeAct RP2350B Core.
+Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter with a harmony voice and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (benchmark in `daisy/`). The reverb is DaisySP-LGPL's ReverbSc (LGPL-2.1), fetched by CMake.
 
 ## Skills
 
 | Skill | Path | When to Use |
 | :--- | :--- | :--- |
-| **vocal-fx-processor** | [SKILL.md](.agents/skills/vocal-fx-processor/SKILL.md) | Building, testing, modifying DSP stages, extending the desktop app or Daisy Seed firmware (or the RP2350 benchmark), adding presets/effects, debugging `DemonicEngine`. |
+| **vocal-fx-processor** | [SKILL.md](.agents/skills/vocal-fx-processor/SKILL.md) | Building, testing, modifying DSP stages, extending the desktop app or Daisy Seed firmware, adding presets/effects, debugging `DemonicEngine`. |
 
 ## Quick Reference
 
 - **Build desktop:** `.agents/skills/vocal-fx-processor/scripts/build_desktop.sh` (or `cmake -B build -S . && cmake --build build -j4`)
 - **Run tests:** `.agents/skills/vocal-fx-processor/scripts/build_tests.sh` (builds into `build-tests/` and runs `ctest`: `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test`)
-- **Build Daisy:** `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh` (benchmark for the Daisy Seed, the planned board; needs libDaisy at `/Users/ww/src/libDaisy` or `LIBDAISY_DIR`; `program-dfu` to flash)
-- **Build Pico:** `.agents/skills/vocal-fx-processor/scripts/build_pico.sh` (WeAct RP2350B Core by default; `PICO_BOARD=pico2` or `pico` to change). Hardware decisions: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp`
+- **Build Daisy:** `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh` (benchmark for the Daisy Seed; needs libDaisy at `/Users/ww/src/libDaisy` or `LIBDAISY_DIR`, and DaisySP with submodules at `/Users/ww/src/DaisySP` or `DAISYSP_SRC_DIR`; `program-dfu` to flash). Hardware decisions: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp`
+- **DaisySP for CMake:** downloaded at a pinned commit, or offline `-DFETCHCONTENT_SOURCE_DIR_DAISYSP=/path/to/DaisySP` (the build scripts pass `/Users/ww/src/DaisySP` when it exists)
 - **Human docs:** [README.md](README.md) and every file in [docs/](docs/) ([USER_GUIDE.md](docs/USER_GUIDE.md), [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md))
 
 ## Rules
 
 - All DSP math must be single-precision `float`. Call `std::sin`/`std::tanh`/`std::abs` etc. on `float` arguments (the float overloads), or `sinf`/`tanhf`/`fabsf`. Never use `M_PI` or unsuffixed double literals; use `kPi` / `kTwoPi` and `1.0f`-style literals.
-- Zero dynamic allocation in `DemonicEngine`. All buffers are fixed-size class members.
-- Any new effect state must be zeroed in both the constructor and `resetState()`, or bypass will not clear it.
+- Zero dynamic allocation in `DemonicEngine`. All buffers are fixed size: short ones are class members, the long echo/freeze buffers live in the caller-owned `DemonicEngineMemory` (SDRAM on the Daisy Seed).
+- Never hard-code a sample count or per-sample coefficient: write it at 44.1 kHz and convert it in the constructor (`rateCoef()`), so 44.1 and 48 kHz sound the same.
+- Any new effect state must be zeroed in both the constructor and `resetState()` (or, for `DemonicEngineMemory`, in `clearLongBuffers()`), or bypass will not clear it.
 - `dsp_pipeline.hpp` / `dsp_pipeline.cpp` are empty stubs. All active code is in `demonic_engine.hpp/.cpp`.
 - `tests/engine_smoke_test.cpp` is out of date (it calls removed methods) and is not built. Add tests to `tests/engine_dsp_test.cpp`.
 - Desktop audio↔UI communication uses `std::atomic` only. No mutexes in the audio callback.

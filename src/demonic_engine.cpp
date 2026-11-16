@@ -38,7 +38,7 @@ inline float readDelayLinear(const float* buf, size_t size, size_t writeHead, fl
 inline float rateCoef(float c, float rate) { return 1.0f - std::pow(1.0f - c, kRefRate / rate); }
 
 // Bypass clears the long buffers (mem.echo, mem.freeze) this many samples per processed frame, so a
-// 64-frame block clears 4096 samples and the whole job takes about 30-50 ms of blocks.
+// 64-frame block clears 4096 samples and the whole job takes about 50 ms of blocks.
 constexpr size_t kClearPerFrame = 64;
 
 // ReverbSc settings: a long, dark tail ("catacomb").

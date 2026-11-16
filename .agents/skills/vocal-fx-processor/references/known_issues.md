@@ -8,15 +8,8 @@ None.
 
 ## OPEN — Medium / Low Priority
 
-### 10.5 Delay/reverb timings disagree with comments; "reverb" is an echo
-**Problem:** the taps read at `(head + offset) % size`, which is a delay of **size − offset**, not offset. The echo commented as "~300 ms" is actually 200 ms. The reverb taps are about 122 ms and 272 ms. The "reverb" is two feedback echoes, not a Schroeder/Freeverb design.
-**Fix:** read at `(head + size − delaySamples) % size` and fix the comments. For a real reverb, use parallel combs and series allpasses with mutually prime lengths.
-
 ### 10.7 Cross-thread data not protected (low)
 `scopeBuffer[]` is a plain array written by the audio thread and read by the UI. Cosmetic (a torn waveform at worst). The UI no longer calls `getCurrentPresetName()`; it uses `getPreset(guiActivePreset)`.
-
-### 10.9 Freeze captures oldest audio, clicks at the seam (low)
-The capture starts at the echo write head (the oldest data, about 0.41–0.5 s ago). The loop seam has no crossfade, which causes an 11 Hz flutter and a click. **Fix:** capture the most recent 4,096 samples and crossfade the seam.
 
 ### 10.10 Minor
 - Parameters are applied per block with no smoothing, which causes zipper noise.
@@ -29,6 +22,8 @@ The capture starts at the echo write head (the oldest data, about 0.41–0.5 s a
 
 ## RESOLVED
 
+- **10.5** The echo and reverb taps read at `(head + offset) % size`, a delay of size − offset, so the comments were wrong, and the "reverb" was two feedback echoes. The echo now reads `echoDelaySamples` behind the head (the ECHO TIME setting, 20 ms–2 s), and the reverb is DaisySP's ReverbSc.
+- **10.9** Freeze captured the oldest 93 ms of the echo ring and clicked at the seam. It now loops the newest second, with a 20 ms crossfade at the seam (`test_freeze_loop`).
 - **10.2** Delay feedback above 1.0 grew without limit. The loop now writes back through `tanhf`, and the output is clamped to ±1.
 - **10.4** The wavefolder escaped ±1 (`fmod` sign, negative blend weight). It now uses a floored modulo and a clamped weight.
 - **10.1** Presets were overwritten by the sliders, so they changed only the name. Fixed with `DemonicEngine::getPreset()` and `selectPreset()` in the desktop app, which writes the preset into the encoder atomics (`guiParam[]`) before publishing the index.

@@ -1,6 +1,6 @@
 #pragma once
-// Shared core of the on-board benchmarks (pico/main_pico.cpp, daisy/main_daisy.cpp): the scenarios,
-// the synthetic input and the timing loop. Each board supplies its own microsecond clock and printing.
+// Core of the on-board benchmark (daisy/main_daisy.cpp): the scenarios, the synthetic input and the
+// timing loop. The board supplies its own microsecond clock and printing.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>

@@ -76,7 +76,7 @@ public:
     // of the input and the whole effect chain stops running. Everything the effects remember (echo and
     // reverb tails, the freeze loop, filter memory) is cleared, and Freeze is switched off, so turning
     // bypass off again starts from a clean slate instead of replaying stale audio. The long buffers are
-    // cleared a slice per block (about 30 ms in all), so no single block overruns its deadline.
+    // cleared a slice per block (about 50 ms in all), so no single block overruns its deadline.
     void setBypass(bool bypass);
     bool isBypassed() const;
 
