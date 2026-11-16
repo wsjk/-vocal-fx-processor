@@ -50,6 +50,7 @@ vocal-fx-processor/
 │   ├── sim_controls.hpp        Simulator: the 11 encoders as data (range, step, display, presets)
 │   ├── sim_layout.hpp          Simulator: enclosure geometry, hit-testing, mouse-drag knob turning
 │   ├── hw_pinout.hpp           Planned hardware wiring: Daisy Seed pins for OLED, LEDs, encoders, footswitches
+│   ├── engine_bench.hpp        Benchmark scenarios and timing loop, shared by daisy/ and pico/
 │   ├── sim_font.hpp            Simulator: embedded DejaVu Sans Mono font (same as Phase Box)
 │   └── dsp_pipeline.hpp        EMPTY (0 bytes), not used by the build
 ├── src/
@@ -57,6 +58,9 @@ vocal-fx-processor/
 │   └── dsp_pipeline.cpp        EMPTY (0 bytes), not used by the build
 ├── desktop/
 │   └── main_desktop.cpp        Desktop app: audio I/O + the simulated pedal (raylib)  [implemented]
+├── daisy/
+│   ├── Makefile                Separate build for the Daisy Seed (needs libDaisy)
+│   └── main_daisy.cpp          Benchmark: how much real-time budget does the engine use on the Daisy Seed?
 ├── pico/
 │   ├── CMakeLists.txt          Separate build for the Raspberry Pi Pico (needs the Pico SDK)
 │   └── main_pico.cpp           Benchmark: how much real-time budget does the engine use on the RP2350?

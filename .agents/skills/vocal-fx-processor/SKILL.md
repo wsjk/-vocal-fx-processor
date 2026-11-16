@@ -42,7 +42,14 @@ g++ -std=c++17 -Iinclude tests/sim_controls_test.cpp src/demonic_engine.cpp -o s
 ```
 Expect `ALL TESTS PASSED (0 failures)` from each. `engine_dsp_test`, `sim_controls_test` and `hw_pinout_test` are built. `engine_smoke_test.cpp` is out of date and does not compile.
 
-### 3. RP2350 Benchmark Build (WeAct RP2350B Core)
+### 3. Daisy Seed Benchmark Build (the planned board)
+```bash
+.agents/skills/vocal-fx-processor/scripts/build_daisy.sh              # -> daisy/build/vocal_daisy_bench.bin
+.agents/skills/vocal-fx-processor/scripts/build_daisy.sh program-dfu  # also flash (Seed in DFU mode: hold BOOT, press RESET)
+```
+The script puts arm-none-eabi on `PATH`, defaults `LIBDAISY_DIR` to `/Users/ww/src/libDaisy`, and builds libDaisy once if `build/libdaisy.a` is missing. `daisy/Makefile` includes libDaisy's `core/Makefile` (C++17, `-O3`, `APP_TYPE=BOOT_NONE`: the program must fit the 128 KB internal flash). Flashing needs `dfu-util`. The program waits for the USB serial port to open; read it with `screen /dev/tty.usbmodem* 115200`. The scenarios and timing loop are shared with the Pico benchmark in `include/engine_bench.hpp`.
+
+### 4. RP2350 Benchmark Build (WeAct RP2350B Core, previous board)
 ```bash
 .agents/skills/vocal-fx-processor/scripts/build_pico.sh      # -> pico/build/vocal_pico_bench.uf2
 PICO_BOARD=pico .agents/skills/vocal-fx-processor/scripts/build_pico.sh   # original RP2040 Pico instead (fresh pico/build)
