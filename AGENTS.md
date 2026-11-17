@@ -26,7 +26,7 @@ Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch 
 - `dsp_pipeline.hpp` / `dsp_pipeline.cpp` are empty stubs. All active code is in `demonic_engine.hpp/.cpp`.
 - `tests/engine_smoke_test.cpp` is out of date (it calls removed methods) and is not built. Add tests to `tests/engine_dsp_test.cpp`.
 - Desktop audio↔UI communication uses `std::atomic` only. No mutexes in the audio callback.
-- **Docs check before every commit or PR.** Run `ls docs/*.md`, then go through `README.md` and every file listed; update any that the change makes wrong or incomplete. In particular:
+- **Docs check before every commit or PR.** Grep `README.md` and `docs/*.md` for every file name, symbol, control, pin, constant and number the change touches, and read the matching sections, not whole files. Read a whole doc only when the change adds a feature or reworks the area that doc covers. Update anything the change makes wrong or incomplete. In particular:
   - `docs/DEVELOPER_GUIDE.md`: keep its `file:line` references pointing at the right code.
   - `docs/USER_GUIDE.md`: controls, presets and behaviour the user sees.
   - `docs/HARDWARE_PLAN.md`: board, codec, pins (`include/hw_pinout.hpp`) and parts.
