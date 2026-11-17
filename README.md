@@ -198,7 +198,7 @@ vocal-fx-processor/
 │   ├── Makefile                Separate libDaisy build (setup notes in its header)
 │   └── main_daisy.cpp          Daisy Seed real-time budget benchmark
 ├── cmake/version.cmake         Version number from the latest v* git tag
-├── .github/                    Release workflow: tags and publishes a GitHub Release on every merge to main
+├── .github/                    CI on every PR (host tests, Daisy builds, 128 KB flash check); release on every merge to main
 ├── .agents/skills/vocal-fx-processor/   Agent runbook, references and build scripts
 └── portaudio/                  Optional vendored PortAudio source (git-ignored; last-resort fallback)
 ```
