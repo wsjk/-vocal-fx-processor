@@ -1,4 +1,5 @@
-# Daisy Seed benchmark build (Electrosmith Daisy Seed 65MB). A separate build from the desktop CMake
+# Daisy Seed builds (Electrosmith Daisy Seed 65MB): the benchmark (APP=bench, the default) and the pedal
+# firmware (APP=firmware, compile-checked only, not yet run on a board). A separate build from the desktop CMake
 # project, because it needs libDaisy and an Arm cross-compiler. Why this board: docs/HARDWARE_PLAN.md.
 #
 # One-time setup
@@ -12,14 +13,27 @@
 #
 # Build (LIBDAISY_DIR and DAISYSP_SRC_DIR default to ../../libDaisy and ../../DaisySP, next to this repository)
 #   make -C daisy LIBDAISY_DIR=~/src/libDaisy DAISYSP_SRC_DIR=~/src/DaisySP   -> daisy/build/vocal_daisy_bench.bin
+#   ... APP=firmware                                                            -> daisy/build/vocal_daisy.bin
+#   Both apps share daisy/build/ (same flags, so the engine objects are reused).
 #
 # Flash and read the results
 #   Plug the Seed in over micro-USB, hold BOOT, press and release RESET, release BOOT. Then:
-#     make -C daisy LIBDAISY_DIR=~/src/libDaisy program-dfu      (needs dfu-util: brew install dfu-util)
+#     make -C daisy LIBDAISY_DIR=~/src/libDaisy [APP=firmware] program-dfu      (needs dfu-util: brew install dfu-util)
 #   Open the serial port that appears (macOS: ls /dev/tty.usbmodem*), e.g.  screen /dev/tty.usbmodem* 115200
-#   The program waits for the port to be opened before it starts.
+#   The benchmark waits for the port to be opened before it starts.
 
+APP ?= bench
+ifeq ($(APP),bench)
 TARGET = vocal_daisy_bench
+MAIN = main_daisy.cpp
+else ifeq ($(APP),firmware)
+TARGET = vocal_daisy
+MAIN = firmware.cpp
+# The OLED shows values with simctl::format's %f; newlib-nano's printf leaves floats out unless asked.
+LDFLAGS = -u _printf_float
+else
+$(error APP must be bench or firmware, not "$(APP)")
+endif
 
 LIBDAISY_DIR ?= ../../libDaisy
 # Not called DAISYSP_DIR: libDaisy's Makefile would then link a prebuilt libdaisysp.a.
@@ -27,7 +41,7 @@ DAISYSP_SRC_DIR ?= ../../DaisySP
 DAISYSP_LGPL_SRC = $(DAISYSP_SRC_DIR)/DaisySP-LGPL/Source
 
 # The engine, plus DaisySP-LGPL's ReverbSc (LGPL-2.1), which it uses for the reverb.
-CPP_SOURCES = main_daisy.cpp ../src/demonic_engine.cpp $(DAISYSP_LGPL_SRC)/Effects/reverbsc.cpp
+CPP_SOURCES = $(MAIN) ../src/demonic_engine.cpp $(DAISYSP_LGPL_SRC)/Effects/reverbsc.cpp
 
 # Same as the desktop build: C++17, optimised.
 CPP_STANDARD = -std=gnu++17

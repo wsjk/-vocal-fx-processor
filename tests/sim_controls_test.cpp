@@ -163,7 +163,31 @@ static void test_knob_drag() {
     check(clicks_from_wheel(acc, 0.3f) == 0 && clicks_from_wheel(acc, 0.3f) == 1, "scroll fractions add up to a click");
 }
 
+// The Daisy firmware's encoder and LED ring logic (daisy/firmware.cpp).
+static void test_hardware_encoders_and_rings() {
+    auto turn = [](Quadrature& q, const char* seq) {   // seq: pin states "AB AB ..." after the rest state 11
+        int clicks = 0;
+        for (const char* s = seq; s[0] && s[1]; s += (s[2] == ' ') ? 3 : 2) clicks += q.update(s[0] == '1', s[1] == '1');
+        return clicks;
+    };
+    Quadrature q;
+    check(turn(q, "01 00 10 11") == 1, "a full clockwise cycle is one click");
+    check(turn(q, "10 00 01 11") == -1, "a full anticlockwise cycle is minus one click");
+    check(turn(q, "01 11 01 11") == 0, "bouncing on one contact is not a click");
+    check(turn(q, "01 00 11") == 0 && turn(q, "01 00 10 11") == 1, "an invalid jump is ignored and the next click counts");
+
+    const int n = 12;
+    int lit = 0;
+    for (int i = 0; i < n; ++i) lit += ring_led_lit(P_DRIVE, 12.0f, i, n);
+    check(lit == 9, "a 12-LED ring at max lights the 9 LEDs inside the 270 degree sweep (%d)", lit);
+    check(ring_led_lit(P_DRIVE, 0.0f, 8, n) && !ring_led_lit(P_DRIVE, 0.0f, 9, n), "a ring at min lights only its first LED");
+    check(ring_led_lit(P_PITCH, 0.0f, 0, n) && !ring_led_lit(P_PITCH, 0.0f, 1, n) && !ring_led_lit(P_PITCH, 0.0f, 11, n),
+          "a bipolar ring at 0 lights only the top LED");
+    check(ring_led_lit(P_PITCH, -1200.0f, 9, n) && !ring_led_lit(P_PITCH, -1200.0f, 3, n), "a bipolar ring grows from the top");
+}
+
 int main() {
+    test_hardware_encoders_and_rings();
     test_layout_fits_and_nothing_overlaps();
     test_hit_testing();
     test_param_mapping();

@@ -59,18 +59,9 @@ static int audioCallback(const void* inputBuffer, void* outputBuffer,
     }
 
     demonic.setBypass(guiBypass.load());          // before the freeze setter below: freeze is refused while bypassed
-    demonic.setPitchShift(guiParam[P_PITCH].load());
-    demonic.setDrive(guiParam[P_DRIVE].load());
-    demonic.setSubOctaveBlend(guiParam[P_SUB].load());
-    demonic.setRobotBlend(guiParam[P_ROBOT].load());
-    demonic.setRobotFreq(guiParam[P_RATE].load());
-    demonic.setWavefold(guiParam[P_FOLD].load());
-    demonic.setDecimation(guiParam[P_DECIM].load());
-    demonic.setDelayTime(guiParam[P_ECHO_TIME].load());
-    demonic.setDelayFeedback(guiParam[P_DELAY_FB].load());
-    demonic.setDelayMix(guiParam[P_DELAY_MIX].load());
-    demonic.setReverbMix(guiParam[P_REVERB].load());
-    demonic.setMix(guiParam[P_MIX].load());
+    float values[PARAM_COUNT];
+    for (int p = 0; p < PARAM_COUNT; ++p) values[p] = guiParam[p].load();
+    simctl::apply(demonic, values);
     demonic.setSpectralFreeze(guiSpectralFreeze.load());
 
     float peakIn = 0.0f;

@@ -323,4 +323,4 @@ These are things you may notice and why:
 - **Harmony has no encoder.** Only presets switch it on.
 - **No saving of settings.** Your encoder changes are lost when you load another preset or restart.
 - **Only tested on macOS-style setups.** The desktop app has not been built or tested on Linux or Windows.
-- **No hardware version yet.** The simulated enclosure shows what the pedal could look like; it is not a finished hardware design. The planned board is an Electrosmith Daisy Seed (see `docs/HARDWARE_PLAN.md`). The repository includes a benchmark program for finding out whether it can run the effects in real time (see the Developer Guide), but there is no audio-capable firmware yet.
+- **No hardware version yet.** The simulated enclosure shows what the pedal could look like; it is not a finished hardware design. The planned board is an Electrosmith Daisy Seed (see `docs/HARDWARE_PLAN.md`). The repository includes a benchmark program for finding out whether it can run the effects in real time (see the Developer Guide), and firmware for the pedal that compiles but has not yet run on a board.

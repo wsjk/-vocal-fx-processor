@@ -61,7 +61,8 @@ vocal-fx-processor/
 │   └── main_desktop.cpp        Desktop app: audio I/O + the simulated pedal (raylib)  [implemented]
 ├── daisy/
 │   ├── Makefile                Separate build for the Daisy Seed (needs libDaisy)
-│   └── main_daisy.cpp          Benchmark: how much real-time budget does the engine use on the Daisy Seed?
+│   ├── main_daisy.cpp          Benchmark: how much real-time budget does the engine use on the Daisy Seed?
+│   └── firmware.cpp            Pedal firmware: engine in the audio callback, panel in the main loop (compile-checked only)
 ├── tests/
 │   ├── engine_dsp_test.cpp     Measures the sound: sample rates, pitch, harmony, echo, freeze, reverb, sub-octave, bypass [built, in ctest]
 │   ├── test_engine.hpp         TestEngine: an engine plus its memory, on the heap, for the tests
@@ -290,9 +291,9 @@ They communicate **only** through a set of global `std::atomic` variables (the "
 Every ~1.45 ms, PortAudio calls `audioCallback` (`main_desktop.cpp:45`), which:
 
 1. Checks whether the preset changed; if so, calls `demonic.loadPreset(...)` (lines 54–59). This updates the preset index the engine reports and the preset fields that have no encoder (harmony); the other values arrive through the encoder atomics in the next step (section 5.4).
-2. Copies every encoder value from the atomics into the engine via setters (lines 61–74). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
-3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 76–81).
-4. Copies the output into the oscilloscope ring buffer (lines 83–88) and publishes the mic peak (line 93).
+2. Copies every encoder value from the atomics into the engine via setters (lines 61–65: `simctl::apply` sends the twelve encoder values). `setBypass` goes first, so that Freeze is refused in the same block if bypass has just been switched on.
+3. Measures the input peak for the level meter and calls `demonic.processBlock(in, out, 64)` (lines 67–72).
+4. Copies the output into the oscilloscope ring buffer (lines 74–79) and publishes the mic peak (line 84).
 5. Returns `paContinue` ("keep going").
 
 ### 4.3 Design decisions worth knowing
@@ -311,7 +312,7 @@ The app is split the way the Phase Box simulator is: pure logic in headers with 
 
 | File | Contents |
 |---|---|
-| `include/sim_controls.hpp` | `simctl::Param` (one per encoder) and the `spec()` table: label, range, step per click, display format, bipolar or not, warning threshold, group (VOICE / MANGLE / SPACE). Helpers to map a value to its ring position and back (`norm`, `from_norm`), turn by clicks (`step`), format it (`format`), and read a preset's values (`preset_values`). |
+| `include/sim_controls.hpp` | `simctl::Param` (one per encoder) and the `spec()` table: label, range, step per click, display format, bipolar or not, warning threshold, group (VOICE / MANGLE / SPACE). Helpers to map a value to its ring position and back (`norm`, `from_norm`), turn by clicks (`step`), format it (`format`), read a preset's values (`preset_values`), and send all twelve to the engine (`apply`). For the Daisy firmware: `ring_led_lit` (which LEDs of a hardware ring are lit) and `Quadrature` (encoder decoder). |
 | `include/sim_layout.hpp` | `simlayout::Layout::make()`: where the enclosure, OLED, group panels, encoders, footswitches, LEDs and jacks are. Hit-testing and overlap helpers, `clicks_from_wheel`, and `KnobDrag` (turning a knob with the mouse: drag round the ring, or up/down from the centre). |
 | `include/sim_font.hpp` | DejaVu Sans Mono, embedded so text looks the same on every machine. |
 
@@ -336,7 +337,7 @@ One atomic per encoder, in an array indexed by `simctl::Param` (`guiParam[simctl
 
 **`selectPreset(idx)`** (line 38) runs on the UI thread: it copies the preset's values into the encoder atomics (pitch is not part of a preset and keeps its value), then stores the new index. Values first, index second, so the callback never sees the new preset with the old values.
 
-### 5.2 The audio callback (lines 45–95)
+### 5.2 The audio callback (lines 45–86)
 
 The signature is dictated by PortAudio; you cannot change it. The parts you care about are `inputBuffer`, `outputBuffer`, and `framesPerBuffer`. The first thing it does is cast the generic `void*` buffers to `float*` (since the stream was opened with `paFloat32`):
 
@@ -347,7 +348,7 @@ float* out = static_cast<float*>(outputBuffer);
 
 The preset check uses a `static` local, `lastPreset`, which persists across calls so the callback can detect a *change*. Then every parameter is pushed into the engine, then the block is processed.
 
-### 5.3 `main()` setup (lines 278–317)
+### 5.3 `main()` setup (lines 269–308)
 
 `vocal_desktop --screenshot file.png` runs the app for 60 frames (about a second), saves the window as `file.png` in the current directory, and quits; `docs/images/simulator.png` is made this way (`cd docs/images && ../../build/vocal_desktop --screenshot simulator.png`). Otherwise there are no command-line options. Setup:
 
@@ -360,7 +361,7 @@ The preset check uses a `static` local, `lastPreset`, which persists across call
 
 Error handling is by return code, not exceptions: functions return `paNoError` on success and `main` prints and exits otherwise.
 
-### 5.4 The UI loop (lines 319–444)
+### 5.4 The UI loop (lines 310–435)
 
 Each frame:
 
@@ -371,7 +372,7 @@ Each frame:
 
 This style is called **immediate-mode UI**: there are no button or knob objects. Every frame the code asks "is the mouse over this circle and pressed?", acts on the answer, and draws it. Only the geometry (`Layout`) and value logic (`simctl`) live outside the loop, which is what lets the tests check them without a window.
 
-### 5.5 Shutdown (lines 446–453)
+### 5.5 Shutdown (lines 437–444)
 
 Unload the texture and fonts, close the window, stop and close the audio stream, terminate PortAudio.
 
@@ -897,6 +898,10 @@ The instructions are in the header of `daisy/Makefile`. In short:
 It repeats a table of results every few seconds covering: a baseline with optional effects off, baseline plus pitch shift, baseline plus reverb, each of the three presets, and a worst case (MEGATRON + pitch shift + harmony + freeze). The scenarios and timing loop live in `include/engine_bench.hpp`.
 
 **Memory placement.** `DemonicEngineMemory` is a `DSY_SDRAM_BSS` global, so its 576 KB go in the SDRAM. The SDRAM only works after `hw.Init()`, and the engine's constructor clears that memory, so the engine is a `static` local constructed in `main()` after `hw.Init()` (its ~410 KB still land in `.bss`, in AXI SRAM). The last build used 94 KB of the 128 KB flash, 438 KB (84 %) of AXI SRAM and 580 KB of SDRAM.
+
+### The firmware
+
+`daisy/firmware.cpp` (`make -C daisy APP=firmware ...`, or `build_daisy.sh`, which builds both) is the pedal itself: the engine in libDaisy's audio callback at 48 kHz in 64-sample blocks, and the panel in the main loop, laid out as in [HARDWARE_PLAN.md §3](HARDWARE_PLAN.md#3-firmware-layout). The encoders go through `simctl::Quadrature` and `simctl::step`, the rings through `simctl::ring_led_lit`, and the values reach the callback through atomics and `simctl::apply`, as in the desktop app. The OLED shows the preset (or the encoder just turned), the bypass/freeze state and the DSP load. It needs `-u _printf_float` (set in the Makefile) for `simctl::format`; the last build used 113 KB (88 %) of the 128 KB flash. It is compile-checked only: nothing in it has run on a board.
 
 > **Not yet run on hardware.** The benchmark builds against libDaisy, but no Seed has run it yet. Treat the first on-device run as the real measurement.
 
