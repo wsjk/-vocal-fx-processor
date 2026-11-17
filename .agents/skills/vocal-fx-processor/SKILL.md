@@ -44,12 +44,12 @@ cmake --build build-tests -j4 && ./build-tests/engine_dsp_test   # quick iterati
 The engine needs DaisySP's ReverbSc. CMake downloads DaisySP at a pinned commit unless a local clone (with `--recurse-submodules`) is given with `-DFETCHCONTENT_SOURCE_DIR_DAISYSP=...`; the build scripts pass `/Users/ww/src/DaisySP` (or `DAISYSP_DIR`) when it exists.
 Expect `ALL TESTS PASSED (0 failures)` from each. `engine_dsp_test`, `sim_controls_test` and `hw_pinout_test` are built. `engine_smoke_test.cpp` is out of date and does not compile.
 
-### 3. Daisy Seed Benchmark Build
+### 3. Daisy Seed Builds (benchmark and firmware)
 ```bash
 .agents/skills/vocal-fx-processor/scripts/build_daisy.sh              # -> daisy/build/vocal_daisy_bench.bin and vocal_daisy.bin (firmware)
 .agents/skills/vocal-fx-processor/scripts/build_daisy.sh program-dfu  # also flash the benchmark (APP=firmware: the firmware); Seed in DFU mode: hold BOOT, press RESET
 ```
-The script puts arm-none-eabi on `PATH`, defaults `LIBDAISY_DIR` to `/Users/ww/src/libDaisy` and `DAISYSP_SRC_DIR` to `/Users/ww/src/DaisySP` (only its DaisySP-LGPL `reverbsc.cpp` is compiled; the name avoids libDaisy's `DAISYSP_DIR`, which links a prebuilt library), and builds libDaisy once if `build/libdaisy.a` is missing. `daisy/Makefile` includes libDaisy's `core/Makefile` (C++17, `-O3`, `APP_TYPE=BOOT_NONE`: the program must fit the 128 KB internal flash). Flashing needs `dfu-util`. The program waits for the USB serial port to open; read it with `screen /dev/tty.usbmodem* 115200`. The scenarios and timing loop are in `include/engine_bench.hpp`. `DemonicEngineMemory` is a `DSY_SDRAM_BSS` global and the engine is a static constructed in `main()` after `hw.Init()`, because the constructor clears that SDRAM. Last build: 94 KB flash (72 %), 438 KB AXI SRAM (84 %), 580 KB SDRAM.
+The script puts arm-none-eabi on `PATH`, defaults `LIBDAISY_DIR` to `/Users/ww/src/libDaisy` and `DAISYSP_SRC_DIR` to `/Users/ww/src/DaisySP` (only its DaisySP-LGPL `reverbsc.cpp` is compiled; the name avoids libDaisy's `DAISYSP_DIR`, which links a prebuilt library), and builds libDaisy once if `build/libdaisy.a` is missing. `daisy/Makefile` includes libDaisy's `core/Makefile` (C++17, `-O3`, `APP_TYPE=BOOT_NONE`: the program must fit the 128 KB internal flash). Flashing needs `dfu-util`. The program waits for the USB serial port to open; read it with `screen /dev/tty.usbmodem* 115200`. The scenarios and timing loop are in `include/engine_bench.hpp`. `DemonicEngineMemory` is a `DSY_SDRAM_BSS` global and the engine is a static constructed in `main()` after `hw.Init()`, because the constructor clears that SDRAM. Last benchmark build: 94 KB flash (72 %), 438 KB AXI SRAM (84 %), 580 KB SDRAM. The firmware is 92 % of flash in CI (gcc 13), so check the size after every change. **Before touching `daisy/firmware.cpp` or adding a peripheral, read [daisy_firmware.md](./references/daisy_firmware.md)**: libDaisy driver catches, clocks, memory sections, and the CI size margin. To run on a real Seed, use the global `daisy-hw-test` skill.
 
 ---
 
@@ -104,3 +104,4 @@ See [known_issues.md](./references/known_issues.md) for details.
 ## 📚 Deep-Dive References
 * DSP pipeline stage details & signal flow: [architecture.md](./references/architecture.md)
 * Known issues & fixes: [known_issues.md](./references/known_issues.md)
+* Daisy firmware and libDaisy facts: [daisy_firmware.md](./references/daisy_firmware.md)
