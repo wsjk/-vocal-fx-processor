@@ -26,11 +26,12 @@ jobs:
 
   daisy:
     runs-on: ubuntu-24.04
-    env:
-      LIBDAISY_DIR: ${{ runner.temp }}/libDaisy
-      DAISYSP_SRC_DIR: ${{ runner.temp }}/DaisySP
     steps:
       - uses: actions/checkout@v4
+      - name: Set the library paths   # the runner context is not available in job-level env
+        run: |
+          echo "LIBDAISY_DIR=$RUNNER_TEMP/libDaisy" >> "$GITHUB_ENV"
+          echo "DAISYSP_SRC_DIR=$RUNNER_TEMP/DaisySP" >> "$GITHUB_ENV"
       - name: Install the Arm toolchain
         run: |
           sudo apt-get update
