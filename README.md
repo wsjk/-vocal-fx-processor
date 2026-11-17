@@ -143,7 +143,7 @@ ctest --test-dir build-tests --output-on-failure
 ```
 
 `tests/engine_dsp_test.cpp` measures what comes out of the engine, and should print `ALL TESTS PASSED (0 failures)`. It checks:
-- that 48 kHz sounds like 44.1 kHz (echo time, tone filter, pitch);
+- that 48 kHz sounds like 44.1 kHz (echo time, tone filter, pitch, decimation);
 - pitch-shifter accuracy on sine and voice-like input, that switching it on or off does not click, and the harmony voice;
 - the echo time setting, the freeze loop (1 s, no click at the seam) and the reverb tail;
 - sub-octave energy at f/2, and silence in giving silence out;

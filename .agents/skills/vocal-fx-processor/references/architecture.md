@@ -16,7 +16,7 @@ dry = input[i]
  → [2]  Sub-octave: detector runs on `voice`; wet = widenedVoice + subOctave
  → [3]  Ring mod: carrier robotFreq + 40 × inputEnvelope Hz, blended by robotBlend (×1.5)
  → [4]  tanh(wet × 10^(driveDb/20)); wavefold if wavefoldDrive > 0.1
- → [5]  Sample-and-hold by int(decimationFactor), then round to 1/32 steps
+ → [5]  Sample-and-hold every int(decimationFactor) samples at 44.1 kHz (decimationPhase), then round to 1/32 steps
  → [6]  Tone one-pole LPF (a = 0.35, ~3 kHz)
  → [7]  Spectral freeze (if on): wet = 0.3 × wet + 0.7 × 1 s loop from mem.freeze (20 ms seam crossfade)
  → [8]  Feedback echo: linear-interpolated tap at echoDelaySamples (glides to delayTime, 20 ms–2 s),

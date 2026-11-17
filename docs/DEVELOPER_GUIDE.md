@@ -403,7 +403,7 @@ Unload the texture and fonts, close the window, stop and close the audio stream,
 
 - **Parameters** (`driveDb`, `subBlend`, `robotBlend`, …) — set from outside. These survive a bypass untouched.
 - **Rate-dependent constants** (`pitchWindow`, `chorusDelay`, `echoLen`, `freezeLoopLen`, …, and the one-pole coefficients `envCoef`, `toneCoef`, `dcPole`, …) — set once in the constructor from values tuned at 44.1 kHz (section 6.4).
-- **Per-stage memory** (`subDetLP1`, `subDetLP2`, `subDetEnv`, `subArmed`, `subToggle`, `subFilterState`, `lowpassState`, `ringModPhase`, `heldSample`, `decimationCounter`, `dcInPrev`, `dcOutPrev`, `inputEnvelope`, `pitchPhase`, `pitchBlend`, `harmonyPhase`, `harmonyLevel`, `echoDelaySamples`, the freeze positions) — what each effect must remember from one sample to the next.
+- **Per-stage memory** (`subDetLP1`, `subDetLP2`, `subDetEnv`, `subArmed`, `subToggle`, `subFilterState`, `lowpassState`, `ringModPhase`, `heldSample`, `decimationPhase`, `dcInPrev`, `dcOutPrev`, `inputEnvelope`, `pitchPhase`, `pitchBlend`, `harmonyPhase`, `harmonyLevel`, `echoDelaySamples`, the freeze positions) — what each effect must remember from one sample to the next.
 - **Buffers** — sized for 48 kHz (`kMaxSampleRate`); at 44.1 kHz the ring lengths are shorter, so the times stay the same:
 
 | Buffer | Size | Duration | Lives in | Used by |
@@ -443,33 +443,34 @@ Sets all members, then converts every length and coefficient for the sample rate
 
 `loadPreset(i)` (lines 163–177) copies the thirteen fields from `presets[i % 3]` into the live parameter members. The `% NUM_PRESETS` makes cycling wrap around.
 
-### 6.5 `processBlock` stage by stage (`demonic_engine.cpp:200–392`)
+### 6.5 `processBlock` stage by stage (`demonic_engine.cpp:200–397`)
 
 Before the loop, two values are computed once per block:
 
 ```cpp
 float gainMultiplier = std::pow(10.0f, driveDb / 20.0f);        // dB → linear
 int decimationStep   = std::max(1, static_cast<int>(decimationFactor));
+float decimationAdvance = kRefRate / sampleRate;                  // 44.1 kHz samples per sample
 ```
 
 Then a `for` loop handles each sample `input[i]` through the gate, the pitch shifter and harmony, and ten numbered stages, in this order:
 
 | # | Lines | Stage | What the code does |
 |---|---|---|---|
-| gate | 225–226 | **Noise gate** | `activeSignal = abs(dry) > 0.02 ? dry : 0`. Anything quieter than 0.02 (−34 dBFS) is zeroed. Also updates `inputEnvelope`, a smoothed loudness meter (a one-pole filter on `abs(activeSignal)`). |
-| 0b | 228–240 | **Pitch shifter** | One read tap sweeps back through `pitchBuffer`, reading the audio faster or slower than it was written (that is what changes the pitch). A second tap covers for it while the first jumps back at the end of each sweep (both in `pitchTap()`). Faded in and out over about 10 ms so switching it on or off does not click. Details in section 6.7. |
-| 0c | 241–249 | **Harmony** | A second `pitchTap()` sweep over the same buffer, `harmonyCents` above or below the shifted voice, added at `harmonyLevel` (faded like the shifter). Skipped while off. |
-| 1 | 251–266 | **Chorus doubler** | Writes the gated signal into `delayLine`. A 0.5 Hz sine LFO modulates a read position around 10 ms ± 1.5 ms (`chorusDelay`, `chorusSwing`). It reads between two neighbouring samples with **linear interpolation** (`a*(1-frac) + b*frac`) because the position is fractional. Adds 30% of that copy to the voice. |
-| 2 | 268–297 | **Sub-octave** | A Schmitt-trigger octave divider: watches a low-passed copy of the voice, flips a square wave on each rising edge (once per cycle, so the square runs at half the frequency), smooths it (one-pole at about 290 Hz) and scales it by the voice's loudness (`inputEnvelope`) and `subBlend`. Details in section 6.8. |
-| 3 | 299–307 | **Ring modulation** | An oscillator at `robotFreq + 40 × inputEnvelope` Hz (`ringModPhase` is the oscillator's angle in radians, wrapped at 2π). `wet` is crossfaded between the clean signal and `wet × sin(phase) × 1.5` by `robotBlend`. |
-| 4 | 309–319 | **Drive and wavefold** | `wet = tanh(wet × gainMultiplier)` is the saturation. If `wavefoldDrive > 0.1`, a triangle fold is applied and mixed in at weight `0.4 × wavefoldDrive`. |
-| 5 | 321–329 | **Decimation** | A counter selects every Nth sample to "hold" (`heldSample`); in-between samples repeat it. Then `round(wet × 32) / 32` quantises to about 6 bits. |
-| 6 | 331–333 | **Tone filter** | One-pole low-pass, `a = 0.35` at 44.1 kHz (`toneCoef`) → roughly 3 kHz cutoff. |
-| 7 | 335–351 | **Spectral freeze** | If active, plays the 1 s loop in `mem.freeze` (crossfaded at the seam) and mixes it 70/30 with the live signal. Section 6.6. |
-| 8 | 353–368 | **Feedback delay** | Glides `echoDelaySamples` towards the ECHO TIME setting, reads `mem.echo` that far behind the head (interpolated), writes `tanh(wet + delayed × delayFeedback)` back in (and into the freeze ring unless frozen), and crossfades the output by `delayMix`. |
-| 9 | 370–375 | **"Catacomb" reverb** | DaisySP's `ReverbSc` (8 modulated, damped delay lines; feedback 0.85, damping 5 kHz), fed `wet` on both inputs; its left output is crossfaded in by `reverbMix`. Skipped if it could not initialise (above about 48 kHz). |
-| 10 | 377–381 | **DC blocker** | `y = x − x_prev + 0.995 × y_prev` (`dcPole` at other rates). A classic high-pass at a few Hz. |
-| mix | 383–390 | **Wet/dry mix, then bypass crossfade** | `processed = dry × (1 − mix) + wet × mix`. Note `dry` is the *ungated* input. Then `output = processed × (1 − bypassBlend) + dry × bypassBlend`, where `bypassBlend` ramps between 0 and 1 over 5 ms (section 6.9). |
+| gate | 226–227 | **Noise gate** | `activeSignal = abs(dry) > 0.02 ? dry : 0`. Anything quieter than 0.02 (−34 dBFS) is zeroed. Also updates `inputEnvelope`, a smoothed loudness meter (a one-pole filter on `abs(activeSignal)`). |
+| 0b | 229–241 | **Pitch shifter** | One read tap sweeps back through `pitchBuffer`, reading the audio faster or slower than it was written (that is what changes the pitch). A second tap covers for it while the first jumps back at the end of each sweep (both in `pitchTap()`). Faded in and out over about 10 ms so switching it on or off does not click. Details in section 6.7. |
+| 0c | 242–250 | **Harmony** | A second `pitchTap()` sweep over the same buffer, `harmonyCents` above or below the shifted voice, added at `harmonyLevel` (faded like the shifter). Skipped while off. |
+| 1 | 252–267 | **Chorus doubler** | Writes the gated signal into `delayLine`. A 0.5 Hz sine LFO modulates a read position around 10 ms ± 1.5 ms (`chorusDelay`, `chorusSwing`). It reads between two neighbouring samples with **linear interpolation** (`a*(1-frac) + b*frac`) because the position is fractional. Adds 30% of that copy to the voice. |
+| 2 | 269–298 | **Sub-octave** | A Schmitt-trigger octave divider: watches a low-passed copy of the voice, flips a square wave on each rising edge (once per cycle, so the square runs at half the frequency), smooths it (one-pole at about 290 Hz) and scales it by the voice's loudness (`inputEnvelope`) and `subBlend`. Details in section 6.8. |
+| 3 | 300–308 | **Ring modulation** | An oscillator at `robotFreq + 40 × inputEnvelope` Hz (`ringModPhase` is the oscillator's angle in radians, wrapped at 2π). `wet` is crossfaded between the clean signal and `wet × sin(phase) × 1.5` by `robotBlend`. |
+| 4 | 310–320 | **Drive and wavefold** | `wet = tanh(wet × gainMultiplier)` is the saturation. If `wavefoldDrive > 0.1`, a triangle fold is applied and mixed in at weight `0.4 × wavefoldDrive`. |
+| 5 | 322–334 | **Decimation** | Takes a new sample to "hold" (`heldSample`) every N samples *at 44.1 kHz*, and repeats it in between. `decimationPhase` counts in 44.1 kHz samples (`kRefRate / sampleRate` per sample, exactly 1 at 44.1 kHz), so at 48 kHz the hold lasts about 3.27 samples for x3 and the crunch sounds the same. Then `round(wet × 32) / 32` quantises to about 6 bits. |
+| 6 | 336–338 | **Tone filter** | One-pole low-pass, `a = 0.35` at 44.1 kHz (`toneCoef`) → roughly 3 kHz cutoff. |
+| 7 | 340–356 | **Spectral freeze** | If active, plays the 1 s loop in `mem.freeze` (crossfaded at the seam) and mixes it 70/30 with the live signal. Section 6.6. |
+| 8 | 358–373 | **Feedback delay** | Glides `echoDelaySamples` towards the ECHO TIME setting, reads `mem.echo` that far behind the head (interpolated), writes `tanh(wet + delayed × delayFeedback)` back in (and into the freeze ring unless frozen), and crossfades the output by `delayMix`. |
+| 9 | 375–380 | **"Catacomb" reverb** | DaisySP's `ReverbSc` (8 modulated, damped delay lines; feedback 0.85, damping 5 kHz), fed `wet` on both inputs; its left output is crossfaded in by `reverbMix`. Skipped if it could not initialise (above about 48 kHz). |
+| 10 | 382–386 | **DC blocker** | `y = x − x_prev + 0.995 × y_prev` (`dcPole` at other rates). A classic high-pass at a few Hz. |
+| mix | 388–395 | **Wet/dry mix, then bypass crossfade** | `processed = dry × (1 − mix) + wet × mix`. Note `dry` is the *ungated* input. Then `output = processed × (1 − bypassBlend) + dry × bypassBlend`, where `bypassBlend` ramps between 0 and 1 over 5 ms (section 6.9). |
 
 #### The one-pole filter, in Python
 
@@ -640,7 +641,7 @@ The Daisy Seed build (`daisy/Makefile`, needs libDaisy and a DaisySP clone) is a
 
 ### 8.1 Add a new parameter (worked example: tone-filter brightness)
 
-Right now the tone filter's coefficient is fixed: `toneCoef`, 0.35 at 44.1 kHz, used by the `lowpassState = ...` line in stage 6 (`demonic_engine.cpp:332`). Here is how to make it adjustable.
+Right now the tone filter's coefficient is fixed: `toneCoef`, 0.35 at 44.1 kHz, used by the `lowpassState = ...` line in stage 6 (`demonic_engine.cpp:337`). Here is how to make it adjustable.
 
 **1. Header — add the state and setter** (`include/demonic_engine.hpp`):
 
@@ -728,6 +729,7 @@ Measures **frequencies in the output**, plus bypass behaviour:
 | Test | What it checks |
 |---|---|
 | Same sound at 48 kHz | At 44.1 and 48 kHz: the echo arrives after 200 ms, the tone filter passes 3 kHz at the same level (±0.5 dB), and −500 cents lands on the right note |
+| Decimation rate | DECIMATE x3 on a 1 kHz sine puts its sample-and-hold image at 13.7 kHz (44100/3 − 1000) at both 44.1 and 48 kHz, not at 15 kHz |
 | Echo time | A click comes back after the ECHO TIME setting (50 ms, 0.5, 1.5 and 2 s), within 1 ms |
 | Freeze loop | After a gliding tone, the frozen output repeats every 1.000 s, and the step at the loop seam is no larger than elsewhere |
 | Harmony | Off: no fifth. On (+700 cents): a fifth over 20× stronger and at least half as strong as the main shifter's; with PITCH −500 it moves to +200 cents |
@@ -779,7 +781,7 @@ When the preset changed, `loadPreset()` copied the preset into the engine, and t
 
 **Now:** the echo is written back through `tanhf`, so above 1.0 it settles at a steady level instead of growing, and the mixed output is clamped to ±1 before the bypass crossfade. `test_extremes_stay_bounded` runs fold 5, drive 12 and feedback 1.05 for 60 s and checks the peak stays ≤ 1. The original analysis follows.
 
-`demonic_engine.cpp:360` (now). The DELAY FB encoder allows feedback up to 1.05 (its ring turns red above 1.0). With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
+`demonic_engine.cpp:365` (now). The DELAY FB encoder allows feedback up to 1.05 (its ring turns red above 1.0). With feedback > 1, every echo is louder than the last, with no ceiling. In testing with a brief burst of input, peak output went from 0.33 to roughly **500,000** within 60 seconds. The audio hardware clips long before that, but the numbers keep growing, and if they ever reach infinity/NaN they would circulate in the loop forever (a restart would be needed). There is also no final limiter anywhere, so any stage can send values far outside ±1 straight to the speakers.
 
 *Mitigation already available:* pressing **Bypass** flushes the loop (section 6.9), so a runaway can be silenced with one keypress. It is a workaround, not a fix: the loop can still run away again.
 
@@ -799,7 +801,7 @@ The engine stored a "formant shift" value that no code ever read, and the displa
 
 **Now:** the floored modulo and clamped blend weight below are in the engine (with `floorf`/`fabsf`). The original analysis follows.
 
-The original line (the fixed version is at `demonic_engine.cpp:314`):
+The original line (the fixed version is at `demonic_engine.cpp:315`):
 
 ```cpp
 folded = std::abs(std::fmod(folded + 1.0f, 4.0f) - 2.0f) - 1.0f;
@@ -860,10 +862,10 @@ Freeze captured the *oldest* 4,096 samples in the 500 ms echo buffer (audio from
 ### 10.10 Minor items
 
 - **No parameter smoothing.** Setter values are applied once per 64-sample block and take effect instantly, so fast encoder moves can produce small clicks ("zipper noise"). Smooth each parameter per-sample with a one-pole filter.
-- **Integer overflow.** `decimationCounter++` (`int`) will overflow after about 13.5 hours of continuous running (signed overflow is undefined behaviour in C++). Wrap it: `decimationCounter = (decimationCounter + 1) % decimationStep`.
+- ~~Integer overflow in `decimationCounter`~~: the counter is now `decimationPhase`, a float that stays between −N and 1.
 - **The noise gate has no hysteresis or release**, so quiet speech near the threshold chatters on and off.
 - **Mono only**, hard-wired to the default devices; no device selection or error recovery if a device disappears.
-- **Decimation is in samples**, so DECIMATE x3 holds every third sample at either rate: the crunch is about 9 % brighter at 48 kHz than at 44.1 kHz. Every other stage is rate-independent (section 6.4).
+- ~~Decimation is in samples~~: it now holds in 44.1 kHz samples, so DECIMATE sounds the same at 48 kHz (`test_decimation_rate`). Every stage is now rate-independent (section 6.4).
 - **Bypass re-initialises ReverbSc in one block** (it clears about 396 KB of SRAM, on the order of 0.1–0.4 ms on the Daisy Seed). The long SDRAM buffers are cleared in slices; if the benchmark shows the reverb's clear overrunning a block, split it the same way.
 - **Empty files** `dsp_pipeline.hpp/.cpp` are placeholders that nothing uses. Delete them or fill them in so newcomers aren't misled.
 - **Committed build leftovers.** `dsp_test` (a compiled test binary) and `project_dump.txt` (a text dump of the sources) are checked in. Neither is used by the build. Delete them and add `dsp_test` to `.gitignore`.

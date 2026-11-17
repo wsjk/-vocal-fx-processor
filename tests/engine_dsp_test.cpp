@@ -387,6 +387,23 @@ static void test_same_sound_at_48k() {
           "-500 cents lands on the right note at both rates (error %+.1f / %+.1f cents)", pitchErr[0], pitchErr[1]);
 }
 
+static void test_decimation_rate() {
+    std::printf("\n-- Decimation: DECIMATE x3 holds at 44100/3 Hz at both 44.1 and 48 kHz --\n");
+    // Sample-and-hold at rate R mirrors a 1 kHz tone to R - 1 kHz. With the hold rate fixed in time,
+    // that image is at 13.7 kHz at both rates; counting in samples would put it at 15 kHz at 48 kHz.
+    const double rates[2] = {44100.0, 48000.0};
+    for (double fs : rates) {
+        auto rig = std::make_unique<TestEngine>(fs); DemonicEngine& e = rig->engine;
+        isolate(e); e.setDecimation(3.0f);
+        auto out = render_at(e, fs, [&](size_t n) { return 0.8f * std::sin(2.0 * kPi * 1000.0 * n / fs); }, 2.0);
+        std::vector<float> tail(out.end() - static_cast<long>(fs), out.end());
+        auto mag = [&](double hz) { return magnitude_at(tail, hz * 44100.0 / fs); };   // magnitude_at assumes 44.1 kHz
+        const double right = mag(44100.0 / 3.0 - 1000.0), wrong = mag(48000.0 / 3.0 - 1000.0);
+        check(right > 4.0 * wrong, "%.1f kHz: image at 13.7 kHz is x%.1f the one at 15.0 kHz",
+              fs / 1000.0, right / wrong);
+    }
+}
+
 static void test_echo_time() {
     std::printf("\n-- Echo time: the echo arrives after the ECHO TIME setting --\n");
     const float times[] = {0.05f, 0.5f, 1.5f, 2.0f};
@@ -486,6 +503,7 @@ static void test_short_bypass_still_clears() {
 
 int main() {
     test_same_sound_at_48k();
+    test_decimation_rate();
     test_echo_time();
     test_freeze_loop();
     test_harmony();
