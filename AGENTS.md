@@ -1,6 +1,6 @@
 # Vocal FX Processor — Agent Instructions
 
-Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter with a harmony voice and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (benchmark in `daisy/`). The reverb is DaisySP-LGPL's ReverbSc (LGPL-2.1), fetched by CMake.
+Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch shifter with a harmony voice and ten numbered effect stages, plus true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (firmware and benchmark in `daisy/`, not yet run on a board). The reverb is DaisySP-LGPL's ReverbSc (LGPL-2.1), fetched by CMake.
 
 ## Skills
 
@@ -12,7 +12,7 @@ Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch 
 
 - **Build desktop:** `.agents/skills/vocal-fx-processor/scripts/build_desktop.sh` (or `cmake -B build -S . && cmake --build build -j4`)
 - **Run tests:** `.agents/skills/vocal-fx-processor/scripts/build_tests.sh` (builds into `build-tests/` and runs `ctest`: `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test`)
-- **Build Daisy:** `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh` (benchmark for the Daisy Seed; needs libDaisy at `/Users/ww/src/libDaisy` or `LIBDAISY_DIR`, and DaisySP with submodules at `/Users/ww/src/DaisySP` or `DAISYSP_SRC_DIR`; `program-dfu` to flash). Hardware decisions: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp`
+- **Build Daisy:** `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh` (benchmark and firmware for the Daisy Seed; needs libDaisy at `/Users/ww/src/libDaisy` or `LIBDAISY_DIR`, and DaisySP with submodules at `/Users/ww/src/DaisySP` or `DAISYSP_SRC_DIR`; `program-dfu` to flash the benchmark, `APP=firmware` for the firmware). Hardware decisions: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp`
 - **DaisySP for CMake:** downloaded at a pinned commit, or offline `-DFETCHCONTENT_SOURCE_DIR_DAISYSP=/path/to/DaisySP` (the build scripts pass `/Users/ww/src/DaisySP` when it exists)
 - **Human docs:** [README.md](README.md) and every file in [docs/](docs/) ([USER_GUIDE.md](docs/USER_GUIDE.md), [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md))
 

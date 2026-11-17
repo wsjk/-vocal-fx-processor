@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include "demonic_engine.hpp"
 
@@ -106,5 +107,55 @@ inline void preset_values(const VocalPreset& pr, float pitch_cents, float out[PA
     out[P_REVERB] = pr.reverbMix;
     out[P_MIX] = pr.wetDryMix;
 }
+
+/// Send every encoder's value to the engine (audio thread / callback, once per block). Bypass, freeze and
+/// presets are set separately; call setBypass before setSpectralFreeze, which is refused while bypassed.
+inline void apply(DemonicEngine& e, const float v[PARAM_COUNT]) {
+    e.setPitchShift(v[P_PITCH]);
+    e.setDrive(v[P_DRIVE]);
+    e.setSubOctaveBlend(v[P_SUB]);
+    e.setRobotBlend(v[P_ROBOT]);
+    e.setRobotFreq(v[P_RATE]);
+    e.setWavefold(v[P_FOLD]);
+    e.setDecimation(v[P_DECIM]);
+    e.setDelayTime(v[P_ECHO_TIME]);
+    e.setDelayFeedback(v[P_DELAY_FB]);
+    e.setDelayMix(v[P_DELAY_MIX]);
+    e.setReverbMix(v[P_REVERB]);
+    e.setMix(v[P_MIX]);
+}
+
+/// Hardware LED ring with `count` LEDs evenly spaced around the knob, LED 0 at the top, numbered clockwise.
+/// An LED is lit when its angle is inside the lit arc (origin_degrees to degrees), widened by half an LED
+/// spacing so the LED nearest the value is always lit. LEDs outside the 270 degree sweep stay dark
+/// (with 12 LEDs, 9 are inside it: -120 to +120 degrees).
+inline bool ring_led_lit(int p, float v, int led, int count) {
+    const float spacing = 360.0f / static_cast<float>(count);
+    float a = static_cast<float>(led) * spacing;
+    if (a > 180.0f) a -= 360.0f;                                       // -180..180, 0 = up
+    if (std::fabs(a) > -MIN_DEGREES) return false;                      // in the gap at the bottom
+    const float a0 = origin_degrees(p), a1 = degrees(p, v);
+    return a >= std::min(a0, a1) - 0.5f * spacing && a <= std::max(a0, a1) + 0.5f * spacing;
+}
+
+/// Quadrature decoder for one mechanical encoder (A/B to ground with pull-ups, so a detent rests at A = B = 1).
+/// Feed it the pins at every poll; it returns +1 for a clockwise click, -1 for anticlockwise, 0 otherwise.
+/// Invalid jumps (both pins changing at once: contact bounce or a missed poll) are ignored. One click is
+/// four transitions, the usual detent spacing; if an encoder counts backwards, swap its A and B pins.
+struct Quadrature {
+    uint8_t last = 0b11;   // (A << 1) | B
+    int8_t sub = 0;        // transitions since the last detent
+
+    int update(bool a, bool b) {
+        static constexpr int8_t kStep[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
+        const uint8_t now = static_cast<uint8_t>((a ? 2 : 0) | (b ? 1 : 0));
+        sub = static_cast<int8_t>(sub + kStep[(last << 2) | now]);
+        last = now;
+        if (now != 0b11) return 0;                      // only count at rest, so bounce mid-click cannot
+        const int clicks = sub >= 3 ? 1 : sub <= -3 ? -1 : 0;   // tolerate one missed transition
+        sub = 0;
+        return clicks;
+    }
+};
 
 } // namespace simctl

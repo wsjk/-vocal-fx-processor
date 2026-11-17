@@ -33,7 +33,7 @@ Talk or sing into a microphone and the engine turns your voice into a pitch-shif
 
 These are tracked in [Developer Guide §10](docs/DEVELOPER_GUIDE.md#10-code-review-known-issues):
 
-- **The board build is a benchmark only** (`daisy/`). There is no audio-capable firmware yet.
+- **The board firmware is untested** (`daisy/`). It compiles, but neither it nor the benchmark has run on a Daisy Seed yet.
 - **The harmony voice has no encoder.** Only presets set it (there are no spare pins for a thirteenth encoder).
 
 ---
@@ -155,7 +155,7 @@ ctest --test-dir build-tests --output-on-failure
 
 ## Daisy Seed
 
-`daisy/` cross-compiles a **benchmark** for the Electrosmith Daisy Seed, the target board, with [libDaisy](https://github.com/electro-smith/libDaisy) (and DaisySP's ReverbSc source). It reports how much of the 1,333 µs budget (64 samples at 48 kHz) each block uses. Setup, build and flashing instructions are in the header of [`daisy/Makefile`](daisy/Makefile); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) has the board, pins and parts, and [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-daisy-seed) the budget and what to try if it is too slow. It has not yet been run on hardware.
+`daisy/` cross-compiles the **pedal firmware** (`firmware.cpp`: engine, encoders, footswitches, OLED, LED rings; compile-checked only) and a **benchmark** for the Electrosmith Daisy Seed, the target board, with [libDaisy](https://github.com/electro-smith/libDaisy) (and DaisySP's ReverbSc source). The benchmark reports how much of the 1,333 µs budget (64 samples at 48 kHz) each block uses. Setup, build and flashing instructions are in the header of [`daisy/Makefile`](daisy/Makefile); [docs/HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md) has the board, pins and parts, and [Developer Guide §11](docs/DEVELOPER_GUIDE.md#11-toward-the-daisy-seed) the budget and what to try if it is too slow. It has not yet been run on hardware.
 
 The benchmark for the previous board, the WeAct RP2350B Core (`pico/`), was removed when the engine outgrew its 520 KB of RAM; it is in the git history.
 
@@ -177,7 +177,7 @@ vocal-fx-processor/
 │   └── HARDWARE_PLAN.md        Board choice (Daisy Seed), audio design, pin map, shopping list, next steps
 ├── include/
 │   ├── demonic_engine.hpp      DemonicEngine class, DemonicEngineMemory (long buffers) and VocalPreset struct
-│   ├── sim_controls.hpp        Simulator encoders: ranges, steps, display, preset values
+│   ├── sim_controls.hpp        Encoders: ranges, steps, display, preset values, LED rings, quadrature decoder
 │   ├── sim_layout.hpp          Simulator enclosure geometry, hit-testing, knob dragging
 │   ├── hw_pinout.hpp           Planned hardware pin map (Daisy Seed)
 │   ├── engine_bench.hpp        Benchmark scenarios and timing loop for daisy/
@@ -196,7 +196,8 @@ vocal-fx-processor/
 │   └── engine_smoke_test.cpp   Out of date; not built
 ├── daisy/
 │   ├── Makefile                Separate libDaisy build (setup notes in its header)
-│   └── main_daisy.cpp          Daisy Seed real-time budget benchmark
+│   ├── main_daisy.cpp          Daisy Seed real-time budget benchmark
+│   └── firmware.cpp            Daisy Seed pedal firmware (compile-checked only)
 ├── cmake/version.cmake         Version number from the latest v* git tag
 ├── .github/                    Release workflow: tags and publishes a GitHub Release on every merge to main
 ├── .agents/skills/vocal-fx-processor/   Agent runbook, references and build scripts

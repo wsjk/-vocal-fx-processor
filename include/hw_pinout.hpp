@@ -2,7 +2,7 @@
 // Planned wiring of the hardware pedal: Electrosmith Daisy Seed 65MB. Single source of truth for pin
 // numbers; docs/HARDWARE_PLAN.md explains the choices. Numbers are libDaisy pin names (n means seed::Dn),
 // not header pin numbers. Plain constants (no libDaisy), so the desktop tests can check them
-// (tests/hw_pinout_test.cpp). No firmware reads them yet. Audio uses the Seed's dedicated audio pins
+// (tests/hw_pinout_test.cpp); daisy/firmware.cpp reads them. Audio uses the Seed's dedicated audio pins
 // and the codec on the board, so it needs no GPIO here.
 #include <cstdint>
 

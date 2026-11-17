@@ -9,7 +9,7 @@ description: >-
 
 # Vocal FX Processor Development Skill
 
-Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a pitch shifter with a harmony voice, 10 numbered effect stages and a wet/dry mix, with true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (benchmark in `daisy/`). The previous board's RP2350 benchmark (`pico/`) was removed; it is in git history.
+Real-time "demonic" vocal effects engine in C++17. The chain is a noise gate, a pitch shifter with a harmony voice, 10 numbered effect stages and a wet/dry mix, with true bypass. It runs in a desktop app (raylib + PortAudio), and the hardware target is the Electrosmith Daisy Seed (firmware and benchmark in `daisy/`, not yet run on a board). The previous board's RP2350 benchmark (`pico/`) was removed; it is in git history.
 
 ---
 
@@ -46,8 +46,8 @@ Expect `ALL TESTS PASSED (0 failures)` from each. `engine_dsp_test`, `sim_contro
 
 ### 3. Daisy Seed Benchmark Build
 ```bash
-.agents/skills/vocal-fx-processor/scripts/build_daisy.sh              # -> daisy/build/vocal_daisy_bench.bin
-.agents/skills/vocal-fx-processor/scripts/build_daisy.sh program-dfu  # also flash (Seed in DFU mode: hold BOOT, press RESET)
+.agents/skills/vocal-fx-processor/scripts/build_daisy.sh              # -> daisy/build/vocal_daisy_bench.bin and vocal_daisy.bin (firmware)
+.agents/skills/vocal-fx-processor/scripts/build_daisy.sh program-dfu  # also flash the benchmark (APP=firmware: the firmware); Seed in DFU mode: hold BOOT, press RESET
 ```
 The script puts arm-none-eabi on `PATH`, defaults `LIBDAISY_DIR` to `/Users/ww/src/libDaisy` and `DAISYSP_SRC_DIR` to `/Users/ww/src/DaisySP` (only its DaisySP-LGPL `reverbsc.cpp` is compiled; the name avoids libDaisy's `DAISYSP_DIR`, which links a prebuilt library), and builds libDaisy once if `build/libdaisy.a` is missing. `daisy/Makefile` includes libDaisy's `core/Makefile` (C++17, `-O3`, `APP_TYPE=BOOT_NONE`: the program must fit the 128 KB internal flash). Flashing needs `dfu-util`. The program waits for the USB serial port to open; read it with `screen /dev/tty.usbmodem* 115200`. The scenarios and timing loop are in `include/engine_bench.hpp`. `DemonicEngineMemory` is a `DSY_SDRAM_BSS` global and the engine is a static constructed in `main()` after `hw.Init()`, because the constructor clears that SDRAM. Last build: 94 KB flash (72 %), 438 KB AXI SRAM (84 %), 580 KB SDRAM.
 
@@ -84,7 +84,7 @@ The script puts arm-none-eabi on `PATH`, defaults `LIBDAISY_DIR` to `/Users/ww/s
 | **DSP Engine** | `include/demonic_engine.hpp`, `src/demonic_engine.cpp` | `DemonicEngine`, `processBlock()`, `resetState()`, `setBypass()`, `VocalPreset`, `DemonicEngineMemory`, `pitchTap()`, `clearLongBuffers()`, `rateCoef()`, `kPitchWindowSec`, `kPitchFade` |
 | **Desktop App** | `desktop/main_desktop.cpp` | `audioCallback()`, `guiParam[]` atomics, `selectPreset()`, `render_oled()`, `draw_encoder()`, `toggleBypass` lambda |
 | **Simulator logic** | `include/sim_controls.hpp`, `include/sim_layout.hpp`, `tests/sim_controls_test.cpp` | `simctl::spec()`, `norm`/`from_norm`/`step`, `preset_values`; `simlayout::Layout::make()`, `KnobDrag` |
-| **Daisy Firmware** | `daisy/main_daisy.cpp`, `daisy/Makefile`, `include/engine_bench.hpp` | Benchmark only (`bench::kScenarios`, `bench::measureUsPerBlock`); no audio I/O yet |
+| **Daisy Firmware** | `daisy/firmware.cpp`, `daisy/main_daisy.cpp`, `daisy/Makefile`, `include/engine_bench.hpp` | Firmware (`APP=firmware`: audio callback, encoders via `simctl`, MCP23017, chunked OLED, SPI WS2812; compile-checked only) and benchmark (`bench::kScenarios`, `bench::measureUsPerBlock`) |
 | **DSP Tests** | `tests/engine_dsp_test.cpp`, `tests/test_engine.hpp` | `TestEngine`, `isolate()`, `render()`, `render_at()` (any sample rate), `run_recorded()`, `block_has()`, `dominant_freq()`, `magnitude_at()` |
 | **Stale test** | `tests/engine_smoke_test.cpp` | Calls removed `resetSubToggleCount()`/`getSubToggleCount()`; not in CMake |
 | **Build System** | `CMakeLists.txt` | `demonic_engine` static lib (links `daisysp_reverbsc`, fetched DaisySP); options `BUILD_DESKTOP`, `BUILD_TESTS`, `USE_SYSTEM_RAYLIB` |
