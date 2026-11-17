@@ -13,6 +13,7 @@ Real-time "demonic" vocal effects engine in C++17. It has a noise gate, a pitch 
 - **Build desktop:** `.agents/skills/vocal-fx-processor/scripts/build_desktop.sh` (or `cmake -B build -S . && cmake --build build -j4`)
 - **Run tests:** `.agents/skills/vocal-fx-processor/scripts/build_tests.sh` (builds into `build-tests/` and runs `ctest`: `engine_dsp_test`, `sim_controls_test`, `hw_pinout_test`)
 - **Build Daisy:** `.agents/skills/vocal-fx-processor/scripts/build_daisy.sh` (benchmark and firmware for the Daisy Seed; needs libDaisy at `/Users/ww/src/libDaisy` or `LIBDAISY_DIR`, and DaisySP with submodules at `/Users/ww/src/DaisySP` or `DAISYSP_SRC_DIR`; `program-dfu` to flash the benchmark, `APP=firmware` for the firmware). Hardware decisions: `docs/HARDWARE_PLAN.md`; pin map: `include/hw_pinout.hpp`
+- **CI:** every PR runs the host tests and both Daisy builds, and fails if a `.bin` is over 128 KB (`.github/workflows/ci.yml`). CI's gcc 13 builds 2–5 % bigger than the local gcc 15. libDaisy notes: `.agents/skills/vocal-fx-processor/references/daisy_firmware.md`
 - **DaisySP for CMake:** downloaded at a pinned commit, or offline `-DFETCHCONTENT_SOURCE_DIR_DAISYSP=/path/to/DaisySP` (the build scripts pass `/Users/ww/src/DaisySP` when it exists)
 - **Human docs:** [README.md](README.md) and every file in [docs/](docs/) ([USER_GUIDE.md](docs/USER_GUIDE.md), [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md), [HARDWARE_PLAN.md](docs/HARDWARE_PLAN.md))
 
