@@ -1,0 +1,63 @@
+# Checks every pull request: the host tests, and the Daisy Seed builds (build_daisy.sh builds every program in
+# daisy/), each of which must fit the Seed's 128 KB internal flash (.github/scripts/check_flash.sh).
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # libDaisy is pinned here; DaisySP is pinned by the GIT_TAG in CMakeLists.txt, which the daisy job reads.
+  LIBDAISY_COMMIT: 1289a000bc29dae1bc0ed4129cfa2df40ef71574
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run the host tests
+        run: .agents/skills/vocal-fx-processor/scripts/build_tests.sh
+
+  daisy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set the library paths   # the runner context is not available in job-level env
+        run: |
+          echo "LIBDAISY_DIR=$RUNNER_TEMP/libDaisy" >> "$GITHUB_ENV"
+          echo "DAISYSP_SRC_DIR=$RUNNER_TEMP/DaisySP" >> "$GITHUB_ENV"
+      - name: Install the Arm toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+          arm-none-eabi-gcc --version | head -1
+      - name: Cache libDaisy (source and build)
+        id: libdaisy-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/libDaisy
+          key: libdaisy-${{ env.LIBDAISY_COMMIT }}-ubuntu-24.04-apt-gcc
+      - name: Get libDaisy at the pinned commit and build it
+        if: steps.libdaisy-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --filter=blob:none https://github.com/electro-smith/libDaisy.git "$LIBDAISY_DIR"
+          git -C "$LIBDAISY_DIR" checkout --quiet "$LIBDAISY_COMMIT"
+          git -C "$LIBDAISY_DIR" submodule update --init --recursive
+          make -C "$LIBDAISY_DIR" -j4
+      - name: Get DaisySP at the commit CMakeLists.txt pins
+        run: |
+          commit=$(sed -n 's/^ *GIT_TAG *\([0-9a-f]\{40\}\).*/\1/p' CMakeLists.txt)
+          test -n "$commit"
+          git clone --filter=blob:none https://github.com/electro-smith/DaisySP.git "$DAISYSP_SRC_DIR"
+          git -C "$DAISYSP_SRC_DIR" checkout --quiet "$commit"
+          git -C "$DAISYSP_SRC_DIR" submodule update --init DaisySP-LGPL
+      - name: Build the Daisy Seed programs
+        run: .agents/skills/vocal-fx-processor/scripts/build_daisy.sh
+      - name: Check that each fits the 128 KB flash
+        run: .github/scripts/check_flash.sh daisy/build/*.bin

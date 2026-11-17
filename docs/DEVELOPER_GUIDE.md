@@ -612,6 +612,10 @@ Release (optimised) is the default build type, since real-time DSP needs it. Pas
 - **DaisySP:** cloned by `FetchContent` at a pinned commit, with its `DaisySP-LGPL` submodule (`SOURCE_SUBDIR no-cmake` stops CMake from building all of DaisySP). Offline, point it at a local clone: `-DFETCHCONTENT_SOURCE_DIR_DAISYSP=/path/to/DaisySP`; the helper scripts do this for `/Users/ww/src/DaisySP` (or `DAISYSP_DIR`) when it exists. This is why the minimum CMake is 3.18.
 - **macOS frameworks** (`CoreAudio`, `Cocoa`, `OpenGL`, and so on) are linked only `if(APPLE)`, so the file no longer breaks other platforms at that step.
 
+### Continuous integration
+
+Every pull request runs `.github/workflows/ci.yml` on Ubuntu: `host-tests` runs `build_tests.sh`, and `daisy` installs the Arm toolchain (apt), builds libDaisy at the commit pinned in the workflow (cached) and DaisySP at the `GIT_TAG` in `CMakeLists.txt`, runs `build_daisy.sh`, and fails if any `daisy/build/*.bin` is larger than the 128 KB internal flash (`.github/scripts/check_flash.sh`). To move libDaisy, change `LIBDAISY_COMMIT` there.
+
 ### Version numbers and releases
 
 Every merge to `main` is a release. `.github/workflows/release.yml` (logic in `.github/scripts/release.sh`) tags the merge commit `vX.Y.Z` and publishes a [GitHub Release](https://github.com/wsjk/-vocal-fx-processor/releases) whose notes list the merged PRs by title. Those notes are the project's changelog. The bump is a patch (0.1.0 → 0.1.1) unless the PR has a `minor` or `major` label; `.github/release.yml` groups the notes by the same labels. The first release is v0.1.0.
